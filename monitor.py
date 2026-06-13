@@ -165,6 +165,17 @@ def _twitter_exe():
     return cand if os.path.exists(cand) else "twitter"
 
 
+def _no_window_kwargs():
+    """Windows 下隐藏子进程的控制台窗口，避免每次调用闪黑框。"""
+    if os.name != "nt":
+        return {}
+    si = subprocess.STARTUPINFO()
+    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    si.wShowWindow = subprocess.SW_HIDE
+    return {"startupinfo": si,
+            "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)}
+
+
 def _norm_time(s):
     """把 '2026-06-13 10:29' 补成 '2026-06-13 10:29:00'，便于和股吧时间一起排序。"""
     s = (s or "").strip().replace("T", " ")
@@ -180,7 +191,8 @@ def parse_tweets(handle):
         return []
     proc = subprocess.run(
         [_twitter_exe(), "user-posts", "@" + handle, "-n", "20", "--json"],
-        capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=90)
+        capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=90,
+        **_no_window_kwargs())
     if not proc.stdout:
         raise RuntimeError((proc.stderr or "twitter-cli 无输出")[:200])
     data = json.loads(proc.stdout)
