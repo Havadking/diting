@@ -1,0 +1,21 @@
+# 本目录与其它无关项目共用，这里只跟踪「东方财富股吧监控」项目文件。
+# 策略：先忽略目录下所有内容，再用 ! 显式放行本项目文件。
+
+/*
+
+# —— 放行本项目文件 ——
+!/.gitignore
+!/README.md
+!/app.py
+!/monitor.py
+!/test_once.py
+!/run.bat
+!/run_gui.bat
+!/config.example.json
+
+# —— 即使被放行也要排除的（含密钥/隐私/运行时产物）——
+config.json
+state.json
+*.log
+_preview.png
+__pycache__/

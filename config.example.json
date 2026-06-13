@@ -1,0 +1,13 @@
+{
+  "poll_interval_seconds": 60,
+  "monitor_posts": true,
+  "monitor_replies": true,
+  "push": {
+    "type": "serverchan",
+    "key": "在这里填你的_Server酱_SendKey_或_PushPlus_token（桌面版可留空）"
+  },
+  "users": [
+    { "uid": "1006087084850440", "name": "示例用户1（把uid换成你要监控的人）" },
+    { "uid": "9440093952207364", "name": "示例用户2" }
+  ]
+}
