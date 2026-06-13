@@ -6,12 +6,16 @@
     "type": "serverchan",
     "key": "在这里填你的_Server酱_SendKey_或_PushPlus_token（桌面版可留空）"
   },
+  "groups": {
+    "游资大佬": "#d6336c",
+    "推特博主": "#0d9488"
+  },
   "users": [
-    { "uid": "1006087084850440", "name": "示例用户1（把uid换成你要监控的人）" },
-    { "uid": "9440093952207364", "name": "示例用户2" }
+    { "uid": "1006087084850440", "name": "示例用户1（把uid换成你要监控的人）", "group": "游资大佬" },
+    { "uid": "9440093952207364", "name": "示例用户2（不写group就用默认按类型上色）" }
   ],
   "twitter_poll_interval_seconds": 180,
   "twitter_users": [
-    { "handle": "elonmusk", "name": "马斯克（把handle换成要监控的推特用户名,不带@）" }
+    { "handle": "elonmusk", "name": "马斯克（把handle换成要监控的推特用户名,不带@）", "group": "推特博主" }
   ]
 }

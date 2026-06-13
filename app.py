@@ -65,7 +65,11 @@ class MonitorApp:
         self.first_cycle = True
         self.row_link = {}   # iid -> 链接
         self.row_fg = {}     # iid -> 前景色 tag
+        self.row_time = {}   # iid -> 完整时间(排序用)
         self.row_seq = 0
+        self.date_nodes = {}   # 日期字符串 -> 父节点 iid
+        self.parent_date = {}  # 父节点 iid -> 日期字符串
+        self._color_tags = set()  # 已创建的分组颜色 tag
         self._dirty = False
         self._last_tw = 0.0  # 上次抓推特的时间戳
 
@@ -146,10 +150,13 @@ class MonitorApp:
         mid.pack(fill="both", expand=True, padx=12, pady=(8, 0))
 
         cols = ("time", "user", "kind", "bar", "content")
-        self.tree = ttk.Treeview(mid, columns=cols, show="headings", selectmode="browse")
-        layout = [("time", "时间", 168, "center"), ("user", "用户", 124, "w"),
-                  ("kind", "类型", 90, "w"), ("bar", "股吧", 150, "w"),
-                  ("content", "内容（双击打开原文）", 540, "w")]
+        self.tree = ttk.Treeview(mid, columns=cols, show="tree headings", selectmode="browse")
+        # #0 为树列，显示日期分组（可折叠）
+        self.tree.heading("#0", text="日期 / 分组", anchor="w")
+        self.tree.column("#0", width=185, anchor="w", stretch=False)
+        layout = [("time", "时间", 70, "center"), ("user", "用户", 124, "w"),
+                  ("kind", "类型", 84, "w"), ("bar", "来源", 140, "w"),
+                  ("content", "内容（双击打开原文）", 520, "w")]
         for c, txt, w, anc in layout:
             self.tree.heading(c, text=txt, anchor="w")
             self.tree.column(c, width=w, anchor=anc, stretch=(c == "content"))
@@ -161,6 +168,11 @@ class MonitorApp:
         self.tree.tag_configure("repost", foreground=C_REPOST)
         self.tree.tag_configure("tweet", foreground=C_TWEET)
         self.tree.tag_configure("hist", foreground=C_HIST)
+        # 日期分组表头样式
+        self.tree.tag_configure("datehdr", background="#dde4f0",
+                                foreground="#1f2a44", font=self.f_bold)
+        self.tree.tag_configure("datehdr_today", background="#c7d7f5",
+                                foreground="#11245c", font=self.f_bold)
 
         vsb = ttk.Scrollbar(mid, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
@@ -215,7 +227,7 @@ class MonitorApp:
         self.stop_event.clear()
         self.btn_start.config(text="停止监控")
         self._refresh_user_label()
-        self.set_status("正在启动…首次抓取会先加载现有内容（灰色，不弹通知）。")
+        self.set_status("正在启动…首次抓取会先加载现有内容（不弹通知），过去的日期默认折叠。")
         self.worker = threading.Thread(target=self._run_loop, daemon=True)
         self.worker.start()
 
@@ -239,6 +251,9 @@ class MonitorApp:
         self.tree.delete(*self.tree.get_children())
         self.row_link.clear()
         self.row_fg.clear()
+        self.row_time.clear()
+        self.date_nodes.clear()
+        self.parent_date.clear()
 
     def open_selected(self, _e=None):
         sel = self.tree.selection()
@@ -246,16 +261,22 @@ class MonitorApp:
             webbrowser.open(self.row_link[sel[0]])
 
     # ---------- 后台线程 ----------
-    def _emit(self, state, skey, name, items):
-        """对一个来源的抓取结果做去重，首轮入历史、之后弹新动态。"""
+    def _emit(self, state, skey, name, items, color=None):
+        """对一个来源的抓取结果做去重，首轮入历史、之后弹新动态。color=分组颜色或None。"""
         seen = set(state.get(skey, []))
         new_items = [it for it in items if it["key"] not in seen]
         state[skey] = list(dict.fromkeys([it["key"] for it in items] + list(seen)))[:500]
         if self.first_cycle:
-            self.q.put(("history", name, sorted(items, key=lambda x: x["time"])[-10:]))
+            self.q.put(("history", name, sorted(items, key=lambda x: x["time"])[-10:], color))
         elif new_items:
             new_items.sort(key=lambda x: x["time"])
-            self.q.put(("new", name, new_items))
+            self.q.put(("new", name, new_items, color))
+
+    @staticmethod
+    def _group_color(cfg, entry):
+        groups = cfg.get("groups", {}) or {}
+        g = entry.get("group")
+        return groups.get(g) if g else None
 
     def _run_loop(self):
         import random
@@ -282,7 +303,7 @@ class MonitorApp:
                     self.q.put(("status", "抓取 %s 失败：%s" % (name, e)))
                     continue
                 if items:
-                    self._emit(state, uid, name, items)
+                    self._emit(state, uid, name, items, self._group_color(cfg, u))
                 self.stop_event.wait(random.uniform(2, 4))
 
             # —— 推特用户（单独的慢节奏，降低风控/封号风险）——
@@ -303,7 +324,7 @@ class MonitorApp:
                         self.q.put(("status", "抓推特 %s 失败：%s" % (name, str(e)[:80])))
                         continue
                     if items:
-                        self._emit(state, "tw:" + handle, name, items)
+                        self._emit(state, "tw:" + handle, name, items, self._group_color(cfg, tu))
                     self.stop_event.wait(random.uniform(2, 4))
 
             monitor.save_state(state)
@@ -324,21 +345,21 @@ class MonitorApp:
                 if kind == "status":
                     self.set_status(rest[0])
                 elif kind == "history":
-                    name, items = rest
+                    name, items, color = rest
                     for it in items:
-                        self._add_row(name, it, history=True)
+                        self._add_row(name, it, color, history=True)
                     self._dirty = True
                     scroll_needed = True
                 elif kind == "new":
-                    name, items = rest
-                    self._handle_new(name, items)
+                    name, items, color = rest
+                    self._handle_new(name, items, color)
                     self._dirty = True
                     scroll_needed = True
         except queue.Empty:
             pass
         if self._dirty:
             at_bottom = self._at_bottom()
-            self._sort_and_stripe()
+            self._rebuild()
             self._dirty = False
             if scroll_needed and at_bottom:
                 self.tree.yview_moveto(1.0)
@@ -350,9 +371,9 @@ class MonitorApp:
         except Exception:
             return True
 
-    def _handle_new(self, name, items):
+    def _handle_new(self, name, items, color=None):
         for it in items:
-            self._add_row(name, it, history=False)
+            self._add_row(name, it, color, history=False)
         if len(items) > 3:
             toast("【%s】%d 条新动态" % (name, len(items)),
                   ("最新：%s" % (items[-1]["content"] or items[-1]["title"]))[:80],
@@ -367,37 +388,90 @@ class MonitorApp:
         self.set_status("%s 新增 %d 条 · %s"
                         % (name, len(items), datetime.now().strftime("%H:%M:%S")))
 
-    def _add_row(self, name, it, history=False):
+    # —— 分组颜色 tag（按需创建）——
+    def _color_tag(self, hexcolor):
+        tag = "c_" + hexcolor.lstrip("#")
+        if tag not in self._color_tags:
+            self.tree.tag_configure(tag, foreground=hexcolor)
+            self._color_tags.add(tag)
+        return tag
+
+    # —— 日期父节点 ——
+    @staticmethod
+    def _today():
+        return datetime.now().strftime("%Y-%m-%d")
+
+    def _ensure_date_node(self, date):
+        if date in self.date_nodes:
+            return self.date_nodes[date]
+        pid = "d_" + date.replace("-", "")
+        is_today = (date == self._today())
+        # 创建时设定折叠状态：今天展开，过去折叠（之后不强制覆盖用户的手动展开）
+        self.tree.insert("", "end", iid=pid, open=is_today,
+                         text=self._date_label(date, 0),
+                         tags=("datehdr_today" if is_today else "datehdr",))
+        self.date_nodes[date] = pid
+        self.parent_date[pid] = date
+        return pid
+
+    def _date_label(self, date, count):
+        suffix = "  · 今天" if date == self._today() else ""
+        return "  %s%s   (%d)" % (date, suffix, count)
+
+    def _add_row(self, name, it, color=None, history=False):
         tagmap = {"发帖": "post", "评论": "reply", "转发": "repost",
                   "推文": "tweet", "转推": "tweet"}
-        fg = "hist" if history else tagmap.get(it["kind"], "")
-        type_txt = "●  " + it["kind"]
+        # 分组颜色优先；否则按类型上色（默认分组=当前颜色）
+        fg = self._color_tag(color) if color else tagmap.get(it["kind"], "")
+        type_txt = "● " + it["kind"]
         content = it["content"] or it["title"] or "(无正文)"
         if it["kind"] == "评论" and it["ctx_text"]:
             content = "[评论《%s》] %s" % (it["ctx_text"][:14], content)
         content = content.replace("\n", " ").replace("\r", " ").strip()
+        full_time = it["time"] or ""
+        date = full_time[:10] or "未知日期"
+        parent = self._ensure_date_node(date)
         iid = "row%d" % self.row_seq
         self.row_seq += 1
-        # 先追加到末尾，稍后统一排序
-        self.tree.insert("", "end", iid=iid,
-                         values=(it["time"], name, type_txt, it["bar"] or "—", content))
+        self.tree.insert(parent, "end", iid=iid,
+                         values=(full_time[11:16], name, type_txt, it["bar"] or "—", content))
         self.row_fg[iid] = fg
+        self.row_time[iid] = full_time
         self.row_link[iid] = it["link"]
 
-    def _sort_and_stripe(self):
-        rows = list(self.tree.get_children())
-        rows.sort(key=lambda iid: self.tree.set(iid, "time"))  # 时间升序：最新在底
-        # 超量裁剪最旧的
-        if len(rows) > MAX_ROWS:
-            for old in rows[:len(rows) - MAX_ROWS]:
+    def _rebuild(self):
+        """按日期分组排序：日期升序（今天在最下），组内时间升序；斑马纹、裁剪、更新计数。"""
+        # 1) 全局裁剪最旧的子行
+        all_children = []
+        for pid in self.tree.get_children(""):
+            for cid in self.tree.get_children(pid):
+                all_children.append(cid)
+        if len(all_children) > MAX_ROWS:
+            all_children.sort(key=lambda c: self.row_time.get(c, ""))
+            for old in all_children[:len(all_children) - MAX_ROWS]:
                 self.row_link.pop(old, None)
                 self.row_fg.pop(old, None)
+                self.row_time.pop(old, None)
                 self.tree.delete(old)
-            rows = rows[len(rows) - MAX_ROWS:]
-        for i, iid in enumerate(rows):
-            self.tree.move(iid, "", i)
-            stripe = "stripe_odd" if i % 2 else "stripe_even"
-            self.tree.item(iid, tags=(self.row_fg.get(iid, ""), stripe))
+        # 2) 父节点按日期升序排列
+        parents = sorted(self.tree.get_children(""),
+                         key=lambda p: self.parent_date.get(p, ""))
+        for i, pid in enumerate(parents):
+            self.tree.move(pid, "", i)
+            kids = list(self.tree.get_children(pid))
+            if not kids:
+                date = self.parent_date.pop(pid, None)
+                self.date_nodes.pop(date, None)
+                self.tree.delete(pid)
+                continue
+            kids.sort(key=lambda c: self.row_time.get(c, ""))
+            for j, cid in enumerate(kids):
+                self.tree.move(cid, pid, j)
+                stripe = "stripe_odd" if j % 2 else "stripe_even"
+                self.tree.item(cid, tags=(self.row_fg.get(cid, ""), stripe))
+            # 更新表头计数
+            date = self.parent_date.get(pid, "")
+            self.tree.item(pid, text=self._date_label(date, len(kids)))
 
     def set_status(self, text):
         self.status.config(text=text)
