@@ -45,6 +45,13 @@ C_REPOST = "#c2620a"  # 转发 橙
 C_TWEET = "#7c3aed"   # 推文 紫
 C_HIST = "#566072"    # 历史 深灰（可清晰阅读）
 
+# 自定义可选颜色：取自「中国传统色」，色相分明且白底上当文字清晰可读
+PALETTE = [
+    ("朱红", "#ED5126"), ("橘橙", "#F97D1C"), ("土黄", "#D6A01D"),
+    ("竹绿", "#1BA784"), ("翠蓝", "#1E9EB3"), ("群青", "#1772B4"),
+    ("青莲", "#8B2671"), ("品红", "#EF3473"),
+]
+
 
 def toast(title, msg, link=None):
     if not HAS_TOAST:
@@ -485,6 +492,14 @@ class MonitorApp:
             self._rebuild()
 
     # —— 应用内 分组配色 ——
+    @staticmethod
+    def _hl(sw_list, hexsel):
+        """高亮当前选中的色块。"""
+        for hx, s in sw_list:
+            sel = hexsel and hx.lower() == hexsel.lower()
+            s.config(highlightbackground=("#111111" if sel else C_BG),
+                     highlightcolor=("#111111" if sel else C_BG))
+
     def open_colors(self):
         try:
             cfg = monitor.load_config()
@@ -494,10 +509,17 @@ class MonitorApp:
         win = tk.Toplevel(self.root)
         win.title("用户分组配色")
         win.configure(bg=C_BG)
-        win.geometry("470x540")
-        tk.Label(win, text="给每个用户点「选色」挑颜色（相同颜色＝同一组）；点「默认」恢复按类型配色。",
+        win.geometry("840x560")
+        tk.Label(win, text="点色块给用户上色（中国传统色，相同颜色＝同一组）；「默认」按动态类型自动配色。",
                  font=self.f_base, bg=C_BG, fg="#5a6478",
-                 wraplength=430, justify="left").pack(padx=16, pady=(14, 6), anchor="w")
+                 wraplength=800, justify="left").pack(padx=16, pady=(14, 4), anchor="w")
+        # 图例
+        legend = tk.Frame(win, bg=C_BG)
+        legend.pack(fill="x", padx=16, pady=(0, 8))
+        tk.Label(legend, text="可选色：", font=self.f_base, bg=C_BG, fg="#5a6478").pack(side="left")
+        for nm, hx in PALETTE:
+            tk.Label(legend, text=nm, font=self.f_base, bg=C_BG, fg=hx).pack(side="left", padx=4)
+
         body = tk.Frame(win, bg=C_BG)
         body.pack(fill="both", expand=True, padx=16)
 
@@ -505,29 +527,42 @@ class MonitorApp:
                [("推特", u) for u in cfg.get("twitter_users", [])]
         groups = cfg.get("groups", {}) or {}
         pend = {}
+        previews = {}
+        swatches = {}
         for tagname, u in rows:
             name = u.get("name") or u.get("uid") or u.get("handle")
             cur = u.get("color") or (groups.get(u.get("group")) if u.get("group") else None)
             pend[name] = cur
             r = tk.Frame(body, bg=C_BG)
-            r.pack(fill="x", pady=5)
-            tk.Label(r, text="[%s] %s" % (tagname, name), font=self.f_base,
-                     bg=C_BG, width=20, anchor="w").pack(side="left")
-            sw = tk.Label(r, text="    ", bg=cur or "#dddddd", relief="groove", width=4)
-            sw.pack(side="left", padx=8)
+            r.pack(fill="x", pady=4)
+            pv = tk.Label(r, text="[%s] %s" % (tagname, name), font=self.f_base,
+                          bg=C_BG, width=16, anchor="w", fg=cur or "#1c2330")
+            pv.pack(side="left")
+            previews[name] = pv
 
-            def pick(nm=name, swl=sw):
-                c = colorchooser.askcolor(color=pend.get(nm) or "#3366cc", parent=win)
-                if c and c[1]:
-                    pend[nm] = c[1]
-                    swl.config(bg=c[1])
+            sw_list = []
+            for _nm, hx in PALETTE:
+                s = tk.Label(r, bg=hx, width=2, height=1, cursor="hand2",
+                             highlightthickness=2, highlightbackground=C_BG, bd=0)
+                s.pack(side="left", padx=1)
 
-            def clr(nm=name, swl=sw):
+                def _set(e=None, nm=name, c=hx):
+                    pend[nm] = c
+                    previews[nm].config(fg=c)
+                    self._hl(swatches[nm], c)
+
+                s.bind("<Button-1>", _set)
+                sw_list.append((hx, s))
+            swatches[name] = sw_list
+
+            def _clr(nm=name):
                 pend[nm] = None
-                swl.config(bg="#dddddd")
+                previews[nm].config(fg="#1c2330")
+                self._hl(swatches[nm], None)
 
-            ttk.Button(r, text="选色", style="Tool.TButton", command=pick).pack(side="left")
-            ttk.Button(r, text="默认", style="Tool.TButton", command=clr).pack(side="left", padx=4)
+            ttk.Button(r, text="默认", style="Tool.TButton",
+                       command=_clr).pack(side="left", padx=(8, 0))
+            self._hl(sw_list, cur)
 
         def save():
             for u in cfg.get("users", []) + cfg.get("twitter_users", []):
