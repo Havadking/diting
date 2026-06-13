@@ -40,6 +40,7 @@ C_TOOLBAR = "#f0f2f7"
 C_POST = "#0a8f5b"    # 发帖 绿
 C_REPLY = "#1d4ed8"   # 评论 蓝
 C_REPOST = "#c2620a"  # 转发 橙
+C_TWEET = "#7c3aed"   # 推文 紫
 C_HIST = "#566072"    # 历史 深灰（可清晰阅读）
 
 
@@ -66,8 +67,9 @@ class MonitorApp:
         self.row_fg = {}     # iid -> 前景色 tag
         self.row_seq = 0
         self._dirty = False
+        self._last_tw = 0.0  # 上次抓推特的时间戳
 
-        root.title("东方财富股吧用户监控 · 桌面版")
+        root.title("东方财富股吧 + 推特 监控 · 桌面版")
         root.geometry("1180x700")
         root.configure(bg=C_BG)
         self._setup_style()
@@ -157,6 +159,7 @@ class MonitorApp:
         self.tree.tag_configure("post", foreground=C_POST)
         self.tree.tag_configure("reply", foreground=C_REPLY)
         self.tree.tag_configure("repost", foreground=C_REPOST)
+        self.tree.tag_configure("tweet", foreground=C_TWEET)
         self.tree.tag_configure("hist", foreground=C_HIST)
 
         vsb = ttk.Scrollbar(mid, orient="vertical", command=self.tree.yview)
@@ -180,13 +183,17 @@ class MonitorApp:
         try:
             cfg = monitor.load_config()
             n = len(cfg.get("users", []))
+            tw = len(cfg.get("twitter_users", []))
             what = []
             if cfg.get("monitor_posts", True):
                 what.append("发帖")
             if cfg.get("monitor_replies", True):
                 what.append("评论")
-            self.lbl_users.config(text="监控 %d 人  ·  %s  ·  间隔 %ds"
-                                  % (n, "+".join(what), cfg.get("poll_interval_seconds", 60)))
+            txt = "股吧 %d 人(%s) · 间隔 %ds" % (n, "+".join(what),
+                                              cfg.get("poll_interval_seconds", 60))
+            if tw:
+                txt += "    推特 %d 人 · 间隔 %ds" % (tw, cfg.get("twitter_poll_interval_seconds", 180))
+            self.lbl_users.config(text=txt)
         except Exception:
             self.lbl_users.config(text="（config.json 读取失败）")
 
@@ -239,8 +246,20 @@ class MonitorApp:
             webbrowser.open(self.row_link[sel[0]])
 
     # ---------- 后台线程 ----------
+    def _emit(self, state, skey, name, items):
+        """对一个来源的抓取结果做去重，首轮入历史、之后弹新动态。"""
+        seen = set(state.get(skey, []))
+        new_items = [it for it in items if it["key"] not in seen]
+        state[skey] = list(dict.fromkeys([it["key"] for it in items] + list(seen)))[:500]
+        if self.first_cycle:
+            self.q.put(("history", name, sorted(items, key=lambda x: x["time"])[-10:]))
+        elif new_items:
+            new_items.sort(key=lambda x: x["time"])
+            self.q.put(("new", name, new_items))
+
     def _run_loop(self):
         import random
+        import time
         state = monitor.load_state()
         while not self.stop_event.is_set():
             try:
@@ -250,6 +269,8 @@ class MonitorApp:
                 self.stop_event.wait(5)
                 continue
             interval = int(cfg.get("poll_interval_seconds", 60))
+
+            # —— 股吧用户 ——
             for u in cfg.get("users", []):
                 if self.stop_event.is_set():
                     break
@@ -260,20 +281,30 @@ class MonitorApp:
                 except Exception as e:
                     self.q.put(("status", "抓取 %s 失败：%s" % (name, e)))
                     continue
-                if not items:
-                    continue
-                seen = set(state.get(uid, []))
-                new_items = [it for it in items if it["key"] not in seen]
-                merged = [it["key"] for it in items] + list(seen)
-                state[uid] = list(dict.fromkeys(merged))[:500]
-
-                if self.first_cycle:
-                    show = sorted(items, key=lambda x: x["time"])[-10:]
-                    self.q.put(("history", name, show))
-                elif new_items:
-                    new_items.sort(key=lambda x: x["time"])
-                    self.q.put(("new", name, new_items))
+                if items:
+                    self._emit(state, uid, name, items)
                 self.stop_event.wait(random.uniform(2, 4))
+
+            # —— 推特用户（单独的慢节奏，降低风控/封号风险）——
+            tw_users = cfg.get("twitter_users", [])
+            tw_interval = int(cfg.get("twitter_poll_interval_seconds", 180))
+            if tw_users and (self.first_cycle or time.time() - self._last_tw >= tw_interval):
+                self._last_tw = time.time()
+                for tu in tw_users:
+                    if self.stop_event.is_set():
+                        break
+                    handle = str(tu.get("handle") or tu.get("uid") or "").lstrip("@")
+                    if not handle:
+                        continue
+                    name = tu.get("name") or ("@" + handle)
+                    try:
+                        items = monitor.parse_tweets(handle)
+                    except Exception as e:
+                        self.q.put(("status", "抓推特 %s 失败：%s" % (name, str(e)[:80])))
+                        continue
+                    if items:
+                        self._emit(state, "tw:" + handle, name, items)
+                    self.stop_event.wait(random.uniform(2, 4))
 
             monitor.save_state(state)
             self.first_cycle = False
@@ -337,7 +368,8 @@ class MonitorApp:
                         % (name, len(items), datetime.now().strftime("%H:%M:%S")))
 
     def _add_row(self, name, it, history=False):
-        tagmap = {"发帖": "post", "评论": "reply", "转发": "repost"}
+        tagmap = {"发帖": "post", "评论": "reply", "转发": "repost",
+                  "推文": "tweet", "转推": "tweet"}
         fg = "hist" if history else tagmap.get(it["kind"], "")
         type_txt = "●  " + it["kind"]
         content = it["content"] or it["title"] or "(无正文)"

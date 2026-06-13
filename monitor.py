@@ -1,17 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-东方财富股吧 - 指定用户「发帖 + 评论」实时监控并推送到微信
+东方财富股吧 + 推特(X) - 指定用户动态实时监控
 
-数据源(均无需登录):
-  发帖/文章/转发: https://i.eastmoney.com/api/guba/fullarticlelist?uid={uid}&pageindex=1
-  评论/回复:      https://i.eastmoney.com/api/guba/myreply?uid={uid}&pageindex=1
-推送渠道: Server酱(serverchan) 或 PushPlus(pushplus)
+数据源:
+  股吧发帖/转发: https://i.eastmoney.com/api/guba/userdynamiclistv2 (type=1)
+  股吧评论/回复: https://i.eastmoney.com/api/guba/myreply
+  推特发帖:      twitter-cli (twitter user-posts @handle --json)，需 X 账号 cookie
+推送渠道: Server酱(serverchan) 或 PushPlus(pushplus)；桌面版用 Windows 通知
 """
 import json
 import os
 import sys
 import time
 import random
+import shutil
+import subprocess
 import urllib.request
 import urllib.parse
 from datetime import datetime
@@ -153,6 +156,69 @@ def parse_replies(uid):
     return items
 
 
+# ---------- 推特(X) ----------
+def _twitter_exe():
+    exe = shutil.which("twitter")
+    if exe:
+        return exe
+    cand = os.path.expanduser(r"~\.local\bin\twitter.exe")
+    return cand if os.path.exists(cand) else "twitter"
+
+
+def _norm_time(s):
+    """把 '2026-06-13 10:29' 补成 '2026-06-13 10:29:00'，便于和股吧时间一起排序。"""
+    s = (s or "").strip().replace("T", " ")
+    if len(s) == 16 and s[4] == "-":
+        return s + ":00"
+    return s[:19] if len(s) >= 19 else s
+
+
+def parse_tweets(handle):
+    """调用 twitter-cli 抓某用户最近推文，归一化成统一格式。"""
+    handle = (handle or "").lstrip("@")
+    if not handle:
+        return []
+    proc = subprocess.run(
+        [_twitter_exe(), "user-posts", "@" + handle, "-n", "20", "--json"],
+        capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=90)
+    if not proc.stdout:
+        raise RuntimeError((proc.stderr or "twitter-cli 无输出")[:200])
+    data = json.loads(proc.stdout)
+    if not data.get("ok", True):
+        raise RuntimeError(str(data.get("error") or data)[:200])
+    items = []
+    for t in data.get("data", []):
+        tid = str(t.get("id") or "")
+        if not tid:
+            continue
+        author = t.get("author") or {}
+        sn = author.get("screenName") or handle
+        is_rt = bool(t.get("isRetweet"))
+        quoted = t.get("quotedTweet") or {}
+        q_author = (quoted.get("author") or {}) if isinstance(quoted, dict) else {}
+        rt_by = t.get("retweetedBy")
+        if isinstance(rt_by, dict):
+            rt_by = rt_by.get("screenName") or rt_by.get("name") or ""
+        if is_rt:
+            ctx_user, ctx_text = (rt_by or ""), ""
+        else:
+            ctx_user = q_author.get("screenName") or ""
+            ctx_text = (quoted.get("text") or "").strip() if isinstance(quoted, dict) else ""
+        items.append({
+            "key": "T" + tid,
+            "kind": "转推" if is_rt else "推文",
+            "icon": "🔁" if is_rt else "🐦",
+            "time": _norm_time(t.get("createdAtLocal") or t.get("createdAtISO")),
+            "title": "",
+            "content": (t.get("text") or "").strip(),
+            "bar": "推特",
+            "ctx_user": ctx_user,
+            "ctx_text": ctx_text,
+            "link": "https://x.com/%s/status/%s" % (sn, tid),
+        })
+    return items
+
+
 # ---------- 推送 ----------
 def push_serverchan(key, title, desp):
     url = "https://sctapi.ftqq.com/%s.send" % key
@@ -196,12 +262,16 @@ def build_message(user_name, it):
         "用户：%s" % user_name,
         "类型：%s" % it["kind"],
         "时间：%s" % it["time"],
-        "股吧：%s" % (it["bar"] or "—"),
+        "来源：%s" % (it["bar"] or "—"),
     ]
     if it["kind"] == "评论" and (it["ctx_user"] or it["ctx_text"]):
         lines.append("评论于：%s 的帖子《%s》" % (it["ctx_user"] or "?", it["ctx_text"] or ""))
     if it["kind"] == "转发" and (it["ctx_user"] or it["ctx_text"]):
         lines.append("转发自：%s 《%s》" % (it["ctx_user"] or "?", it["ctx_text"] or ""))
+    if it["kind"] == "转推" and it["ctx_user"]:
+        lines.append("转推自：@%s" % it["ctx_user"])
+    if it["kind"] == "推文" and (it["ctx_user"] or it["ctx_text"]):
+        lines.append("引用 @%s：%s" % (it["ctx_user"] or "?", it["ctx_text"] or ""))
     if it["title"]:
         lines.append("标题：%s" % it["title"])
     lines.append("")

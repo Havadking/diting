@@ -54,6 +54,27 @@
 - `push.key`：上一步拿到的 SendKey 或 token。
 - `users`：要监控的人，`uid` 必填，`name` 是你自己起的备注名（推送里会显示）。
 
+### （可选）顺便监控推特(X)用户
+
+配置里再加这两项即可，新推文会和股吧动态一起显示/通知（紫色「🐦推文」）：
+
+```json
+  "twitter_poll_interval_seconds": 180,
+  "twitter_users": [
+    { "handle": "elonmusk", "name": "马斯克" }
+  ]
+```
+
+- `handle`：推特用户名（`@` 后面那串，**不带 @**）。
+- `twitter_poll_interval_seconds`：推特单独的轮询间隔，**建议 ≥180 秒**。
+
+**推特功能的前提（一次性）：**
+1. 装了 `twitter-cli`：`pipx install twitter-cli`。
+2. 配好 X 账号 Cookie：环境变量 `TWITTER_AUTH_TOKEN` + `TWITTER_CT0`（用浏览器 Cookie-Editor 插件导出）。
+3. 能访问 X（国内需保持代理可用）。
+4. ⚠ 用自己账号 Cookie 抓取有**小概率被风控/封号**，间隔别太小，建议用小号。
+5. Cookie 失效（异地退登/改密）后需重新导一次。
+
 ---
 
 ## 二、运行

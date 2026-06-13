@@ -9,5 +9,9 @@
   "users": [
     { "uid": "1006087084850440", "name": "示例用户1（把uid换成你要监控的人）" },
     { "uid": "9440093952207364", "name": "示例用户2" }
+  ],
+  "twitter_poll_interval_seconds": 180,
+  "twitter_users": [
+    { "handle": "elonmusk", "name": "马斯克（把handle换成要监控的推特用户名,不带@）" }
   ]
 }
