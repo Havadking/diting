@@ -31,6 +31,7 @@ APP_ID = "东方财富股吧监控"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ERR_LOG = os.path.join(BASE_DIR, "gui_error.log")
 MAX_ROWS = 1000
+MERGE_LIMIT = 8  # 一轮内同一用户新增超过这么多条才合并通知，否则逐条弹
 
 # ---- 配色 ----
 C_BG = "#ffffff"
@@ -376,7 +377,8 @@ class MonitorApp:
     def _handle_new(self, name, items):
         for it in items:
             self._add_item(name, it)
-        if len(items) > 3:
+        # 突发多条时尽量逐条弹（上限 MERGE_LIMIT 条）；超过才合并成一条，避免极端刷屏
+        if len(items) > MERGE_LIMIT:
             toast("【%s】%d 条新动态" % (name, len(items)),
                   ("最新：%s" % (items[-1]["content"] or items[-1]["title"]))[:80],
                   items[-1]["link"])

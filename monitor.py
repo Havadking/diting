@@ -190,7 +190,7 @@ def parse_tweets(handle):
     if not handle:
         return []
     proc = subprocess.run(
-        [_twitter_exe(), "user-posts", "@" + handle, "-n", "20", "--json"],
+        [_twitter_exe(), "user-posts", "@" + handle, "-n", "40", "--json"],
         capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=90,
         **_no_window_kwargs())
     if not proc.stdout:
