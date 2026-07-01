@@ -5,13 +5,18 @@
 
 # —— 放行本项目文件 ——
 !/.gitignore
+!/.gitattributes
 !/README.md
+!/LICENSE
+!/requirements.txt
 !/app.py
 !/monitor.py
 !/test_once.py
 !/run.bat
 !/run_gui.bat
 !/config.example.json
+!/docs/
+!/docs/screenshot.png
 
 # —— 即使被放行也要排除的（含密钥/隐私/运行时产物）——
 config.json

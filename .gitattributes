@@ -1,0 +1,4 @@
+# 统一行尾，避免跨平台 CRLF/LF 警告
+* text=auto eol=lf
+*.bat text eol=crlf
+*.png binary

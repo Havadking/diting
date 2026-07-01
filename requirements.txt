@@ -1,0 +1,6 @@
+# 桌面版 Windows 系统通知（可选，但推荐；不装则只在窗口显示、不弹通知）
+winotify>=1.1.0
+
+# 说明：
+# - 其余功能仅用 Python 标准库(tkinter/urllib/json 等)，无需额外安装。
+# - 推特监控依赖 twitter-cli，请用 pipx 安装：  pipx install twitter-cli
