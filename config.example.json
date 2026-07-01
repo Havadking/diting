@@ -12,7 +12,7 @@
   },
   "users": [
     { "uid": "1006087084850440", "name": "示例用户1（把uid换成你要监控的人）", "group": "游资大佬" },
-    { "uid": "9440093952207364", "name": "示例用户2（不写group就用默认按类型上色）" }
+    { "uid": "9440093952207364", "name": "示例用户2（mute=true 只收进列表、不弹通知）", "mute": true }
   ],
   "twitter_poll_interval_seconds": 180,
   "twitter_users": [

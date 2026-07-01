@@ -80,6 +80,7 @@ class MonitorApp:
         self.user_collapsed = {}  # 日期 -> 是否折叠（用户手动覆盖）
         self._color_tags = set()  # 已创建的颜色 tag
         self._color_map = {}      # 用户名 -> 颜色
+        self._muted = set()       # 被静音(只收不提示)的用户名
         self._dirty = False
         self._last_tw = 0.0       # 上次抓推特的时间戳
 
@@ -144,7 +145,7 @@ class MonitorApp:
         self.btn_start.pack(side="left")
         ttk.Button(inner, text="测试通知", style="Tool.TButton",
                    command=self.test_toast).pack(side="left", padx=(8, 0))
-        ttk.Button(inner, text="分组配色", style="Tool.TButton",
+        ttk.Button(inner, text="用户设置", style="Tool.TButton",
                    command=self.open_colors).pack(side="left", padx=(8, 0))
         ttk.Button(inner, text="打开配置", style="Tool.TButton",
                    command=self.open_config).pack(side="left", padx=(8, 0))
@@ -381,11 +382,17 @@ class MonitorApp:
             return True
 
     def _handle_new(self, name, items):
+        self._refresh_config_maps()   # 取最新的静音/颜色设置
         # 只对「确实是新的」条目弹通知（按 key 去重），防止偶发重复推送
         fresh = [it for it in items if it["key"] not in self.item_keys]
         for it in items:
             self._add_item(name, it)
         if not fresh:
+            return
+        # 静音用户：只入列表、不弹通知
+        if name in self._muted:
+            self.set_status("🔕 %s 新增 %d 条（静音·仅入列）· %s"
+                            % (name, len(fresh), datetime.now().strftime("%H:%M:%S")))
             return
         # 突发多条时尽量逐条弹（上限 MERGE_LIMIT 条）；超过才合并成一条，避免极端刷屏
         if len(fresh) > MERGE_LIMIT:
@@ -429,9 +436,10 @@ class MonitorApp:
             self._color_tags.add(tag)
         return tag
 
-    def _refresh_color_map(self):
-        """从配置生成 用户名->颜色：优先用户自带 color，其次所属分组的颜色。"""
+    def _refresh_config_maps(self):
+        """从配置生成 用户名->颜色 及 静音用户集合。"""
         m = {}
+        muted = set()
         try:
             cfg = monitor.load_config()
         except Exception:
@@ -439,10 +447,15 @@ class MonitorApp:
         groups = cfg.get("groups", {}) or {}
         for u in (cfg.get("users", []) or []) + (cfg.get("twitter_users", []) or []):
             name = u.get("name") or u.get("uid") or u.get("handle")
+            if not name:
+                continue
             c = u.get("color") or (groups.get(u.get("group")) if u.get("group") else None)
-            if name and c:
+            if c:
                 m[name] = c
+            if u.get("mute"):
+                muted.add(name)
         self._color_map = m
+        self._muted = muted
 
     def _resolve_fg(self, name, kind):
         c = self._color_map.get(name)
@@ -453,7 +466,7 @@ class MonitorApp:
 
     # —— 重建列表（扁平 + 日期表头 + 自定义折叠）——
     def _rebuild(self):
-        self._refresh_color_map()
+        self._refresh_config_maps()
         if len(self.items) > MAX_ROWS:
             self.items.sort(key=lambda x: x["time"])
             drop = self.items[:len(self.items) - MAX_ROWS]
@@ -519,12 +532,12 @@ class MonitorApp:
             messagebox.showerror("错误", "读取配置失败：%s" % e)
             return
         win = tk.Toplevel(self.root)
-        win.title("用户分组配色")
+        win.title("用户设置：配色 / 静音")
         win.configure(bg=C_BG)
-        win.geometry("840x560")
-        tk.Label(win, text="点色块给用户上色（中国传统色，相同颜色＝同一组）；「默认」按动态类型自动配色。",
+        win.geometry("1000x560")
+        tk.Label(win, text="点色块给用户上色（相同颜色＝同一组，「默认」按类型配色）；勾选「🔕静音」= 该用户只收进列表、不弹通知。",
                  font=self.f_base, bg=C_BG, fg="#5a6478",
-                 wraplength=800, justify="left").pack(padx=16, pady=(14, 4), anchor="w")
+                 wraplength=960, justify="left").pack(padx=16, pady=(14, 4), anchor="w")
         # 图例
         legend = tk.Frame(win, bg=C_BG)
         legend.pack(fill="x", padx=16, pady=(0, 8))
@@ -541,6 +554,7 @@ class MonitorApp:
         pend = {}
         previews = {}
         swatches = {}
+        mutevars = {}
         for tagname, u in rows:
             name = u.get("name") or u.get("uid") or u.get("handle")
             cur = u.get("color") or (groups.get(u.get("group")) if u.get("group") else None)
@@ -574,6 +588,11 @@ class MonitorApp:
 
             ttk.Button(r, text="默认", style="Tool.TButton",
                        command=_clr).pack(side="left", padx=(8, 0))
+            mv = tk.BooleanVar(value=bool(u.get("mute")))
+            mutevars[name] = mv
+            tk.Checkbutton(r, text="🔕静音", variable=mv, font=self.f_base,
+                           bg=C_BG, activebackground=C_BG,
+                           anchor="w").pack(side="left", padx=(10, 0))
             self._hl(sw_list, cur)
 
         def save():
@@ -584,6 +603,10 @@ class MonitorApp:
                     u["color"] = c
                 else:
                     u.pop("color", None)
+                if mutevars.get(nm) and mutevars[nm].get():
+                    u["mute"] = True
+                else:
+                    u.pop("mute", None)
             try:
                 with open(monitor.CONFIG_PATH, "w", encoding="utf-8") as f:
                     json.dump(cfg, f, ensure_ascii=False, indent=2)
@@ -591,7 +614,7 @@ class MonitorApp:
                 messagebox.showerror("保存失败", str(e))
                 return
             self._rebuild()
-            self.set_status("已更新分组配色。")
+            self.set_status("已更新用户设置（配色 / 静音）。")
             win.destroy()
 
         ttk.Button(win, text="保存", style="Accent.TButton",
