@@ -1,4 +1,8 @@
-# 股吧 & 推特 监控（东方财富股吧 + X）
+# 谛听 · 股吧 & 推特 监控（东方财富股吧 + X）
+
+![License](https://img.shields.io/badge/License-MIT-green.svg)
+![Python](https://img.shields.io/badge/Python-3.9%2B-blue.svg)
+![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey.svg)
 
 一个本地运行的桌面小工具：盯住你关心的**东方财富股吧用户**和**推特(X)用户**，
 他们一发帖 / 评论 / 发推，就弹 **Windows 系统通知** 并显示在窗口列表里。
