@@ -232,13 +232,19 @@ class MonitorApp:
         except Exception as e:
             messagebox.showerror("配置错误", "读取 config.json 失败：\n%s" % e)
             return
+        # 先确保没有旧线程还在跑（避免重复推送）
+        if self.worker and self.worker.is_alive():
+            self.stop_event.set()
+            self.worker.join(timeout=3)
         self.running = True
         self.first_cycle = True
-        self.stop_event.clear()
+        self._last_tw = 0.0
+        self.stop_event = threading.Event()   # 给新线程一个全新的停止信号
+        my_stop = self.stop_event
         self.btn_start.config(text="停止监控")
         self._refresh_user_label()
         self.set_status("正在启动…首次抓取会先加载现有内容（不弹通知），过去的日期默认折叠。")
-        self.worker = threading.Thread(target=self._run_loop, daemon=True)
+        self.worker = threading.Thread(target=self._run_loop, args=(my_stop,), daemon=True)
         self.worker.start()
 
     def stop(self):
@@ -281,22 +287,22 @@ class MonitorApp:
             new_items.sort(key=lambda x: x["time"])
             self.q.put(("new", name, new_items))
 
-    def _run_loop(self):
+    def _run_loop(self, stop_event):
         import random
         import time
         state = monitor.load_state()
-        while not self.stop_event.is_set():
+        while not stop_event.is_set():
             try:
                 cfg = monitor.load_config()
             except Exception as e:
                 self.q.put(("status", "读取配置失败：%s" % e))
-                self.stop_event.wait(5)
+                stop_event.wait(5)
                 continue
             interval = int(cfg.get("poll_interval_seconds", 60))
 
             # —— 股吧用户 ——
             for u in cfg.get("users", []):
-                if self.stop_event.is_set():
+                if stop_event.is_set():
                     break
                 uid = str(u["uid"])
                 name = u.get("name") or uid
@@ -307,7 +313,7 @@ class MonitorApp:
                     continue
                 if items:
                     self._emit(state, uid, name, items)
-                self.stop_event.wait(random.uniform(2, 4))
+                stop_event.wait(random.uniform(2, 4))
 
             # —— 推特用户（单独的慢节奏，降低风控/封号风险）——
             tw_users = cfg.get("twitter_users", [])
@@ -315,7 +321,7 @@ class MonitorApp:
             if tw_users and (self.first_cycle or time.time() - self._last_tw >= tw_interval):
                 self._last_tw = time.time()
                 for tu in tw_users:
-                    if self.stop_event.is_set():
+                    if stop_event.is_set():
                         break
                     handle = str(tu.get("handle") or tu.get("uid") or "").lstrip("@")
                     if not handle:
@@ -328,15 +334,15 @@ class MonitorApp:
                         continue
                     if items:
                         self._emit(state, "tw:" + handle, name, items)
-                    self.stop_event.wait(random.uniform(2, 4))
+                    stop_event.wait(random.uniform(2, 4))
 
             monitor.save_state(state)
             self.first_cycle = False
             self.q.put(("status", "上次检查 %s · 运行中"
                         % datetime.now().strftime("%H:%M:%S")))
             waited = 0.0
-            while waited < interval and not self.stop_event.is_set():
-                self.stop_event.wait(1)
+            while waited < interval and not stop_event.is_set():
+                stop_event.wait(1)
                 waited += 1
 
     # ---------- 主线程：消费队列 ----------
@@ -375,22 +381,26 @@ class MonitorApp:
             return True
 
     def _handle_new(self, name, items):
+        # 只对「确实是新的」条目弹通知（按 key 去重），防止偶发重复推送
+        fresh = [it for it in items if it["key"] not in self.item_keys]
         for it in items:
             self._add_item(name, it)
+        if not fresh:
+            return
         # 突发多条时尽量逐条弹（上限 MERGE_LIMIT 条）；超过才合并成一条，避免极端刷屏
-        if len(items) > MERGE_LIMIT:
-            toast("【%s】%d 条新动态" % (name, len(items)),
-                  ("最新：%s" % (items[-1]["content"] or items[-1]["title"]))[:80],
-                  items[-1]["link"])
+        if len(fresh) > MERGE_LIMIT:
+            toast("【%s】%d 条新动态" % (name, len(fresh)),
+                  ("最新：%s" % (fresh[-1]["content"] or fresh[-1]["title"]))[:80],
+                  fresh[-1]["link"])
         else:
-            for it in items:
+            for it in fresh:
                 head = "%s %s · %s" % (it["icon"], it["kind"], name)
                 body = it["content"] or it["title"] or "(无正文)"
                 if it["kind"] == "评论" and it["ctx_text"]:
                     body = "评论《%s》：%s" % (it["ctx_text"][:18], body)
                 toast(head, body[:120], it["link"])
         self.set_status("%s 新增 %d 条 · %s"
-                        % (name, len(items), datetime.now().strftime("%H:%M:%S")))
+                        % (name, len(fresh), datetime.now().strftime("%H:%M:%S")))
 
     # —— 数据模型 ——
     def _add_item(self, name, it):
