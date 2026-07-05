@@ -72,7 +72,8 @@ class MonitorApp:
         self.worker = None
         self.stop_event = threading.Event()
         self.running = False
-        self.first_cycle = True
+        self.first_cycle = True   # 仅用于「启动后立刻抓一次推特」的时机控制
+        self._seeded = set()      # 已完成首轮基线的来源(skey)，按来源分别 seed
         self.items = []           # 数据模型：所有动态(dict)
         self.item_keys = set()    # 去重
         self.row_link = {}        # iid -> 链接（每次重建）
@@ -239,6 +240,7 @@ class MonitorApp:
             self.worker.join(timeout=3)
         self.running = True
         self.first_cycle = True
+        self._seeded = set()      # 每次启动都重新按来源做首轮基线
         self._last_tw = 0.0
         self.stop_event = threading.Event()   # 给新线程一个全新的停止信号
         my_stop = self.stop_event
@@ -278,11 +280,13 @@ class MonitorApp:
 
     # ---------- 后台线程 ----------
     def _emit(self, state, skey, name, items):
-        """对一个来源的抓取结果做去重，首轮入历史、之后弹新动态。"""
+        """对一个来源的抓取结果做去重。该来源**第一次抓成功**时入历史(不提示)，
+        之后才弹新动态。按来源分别处理，避免某来源开机时抓取失败就永远不显示。"""
         seen = set(state.get(skey, []))
         new_items = [it for it in items if it["key"] not in seen]
         state[skey] = list(dict.fromkeys([it["key"] for it in items] + list(seen)))[:500]
-        if self.first_cycle:
+        if skey not in self._seeded:
+            self._seeded.add(skey)
             self.q.put(("history", name, sorted(items, key=lambda x: x["time"])[-10:]))
         elif new_items:
             new_items.sort(key=lambda x: x["time"])
