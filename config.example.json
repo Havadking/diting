@@ -17,5 +17,10 @@
   "twitter_poll_interval_seconds": 180,
   "twitter_users": [
     { "handle": "elonmusk", "name": "马斯克（把handle换成要监控的推特用户名,不带@）", "group": "推特博主" }
+  ],
+  "weibo_cookie": "SUB=你登录微博后导出的SUB值; SUBP=对应的SUBP值",
+  "weibo_poll_interval_seconds": 120,
+  "weibo_users": [
+    { "uid": "1401527553", "name": "示例微博用户（uid=主页 weibo.com/u/后面那串数字）" }
   ]
 }

@@ -231,6 +231,69 @@ def parse_tweets(handle):
     return items
 
 
+# ---------- 微博 ----------
+_WB_MON = {"Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "Jun": 6,
+           "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12}
+
+
+def _parse_weibo_time(s):
+    """'Sun Jul 12 21:41:08 +0800 2026' -> '2026-07-12 21:41:08'"""
+    try:
+        p = (s or "").split()
+        return "%s-%02d-%02d %s" % (p[5], _WB_MON[p[1]], int(p[2]), p[3])
+    except Exception:
+        return ""
+
+
+def parse_weibo(uid, cookie):
+    """抓某微博用户的主页动态(发帖/转发/回复)。用桌面版 ajax 接口，需登录 cookie(SUB)。"""
+    uid = str(uid)
+    url = "https://weibo.com/ajax/statuses/mymblog?uid=%s&page=1&feature=0" % uid
+    req = urllib.request.Request(url, headers={
+        "User-Agent": UA,
+        "Cookie": cookie,
+        "Referer": "https://weibo.com/u/%s" % uid,
+        "Accept": "application/json, text/plain, */*",
+        "x-requested-with": "XMLHttpRequest",
+    })
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        data = json.loads(resp.read().decode("utf-8", "ignore"))
+    if data.get("ok") != 1:
+        raise RuntimeError("微博接口 ok=%s（cookie 可能失效，需重新导 SUB）" % data.get("ok"))
+    items = []
+    for mb in (data.get("data") or {}).get("list", []):
+        mid = str(mb.get("idstr") or mb.get("id") or "")
+        if not mid:
+            continue
+        rt = mb.get("retweeted_status")
+        text = (mb.get("text_raw") or "").strip()
+        if mb.get("isLongText"):
+            text += " …[长文]"
+        if rt:
+            kind, icon = "转发", "🔁"
+            ctx_user = (rt.get("user") or {}).get("screen_name") or ""
+            ctx_text = (rt.get("text_raw") or "").strip()
+        elif text.startswith("回复@"):
+            kind, icon = "评论", "💬"
+            ctx_user, ctx_text = "", ""
+        else:
+            kind, icon = "发帖", "📝"
+            ctx_user, ctx_text = "", ""
+        items.append({
+            "key": "W" + mid,
+            "kind": kind,
+            "icon": icon,
+            "time": _parse_weibo_time(mb.get("created_at")),
+            "title": "",
+            "content": text,
+            "bar": "微博",
+            "ctx_user": ctx_user,
+            "ctx_text": ctx_text,
+            "link": "https://weibo.com/%s/%s" % (uid, mb.get("mblogid") or mid),
+        })
+    return items
+
+
 # ---------- 推送 ----------
 def push_serverchan(key, title, desp):
     url = "https://sctapi.ftqq.com/%s.send" % key

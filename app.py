@@ -84,6 +84,7 @@ class MonitorApp:
         self._muted = set()       # 被静音(只收不提示)的用户名
         self._dirty = False
         self._last_tw = 0.0       # 上次抓推特的时间戳
+        self._last_wb = 0.0       # 上次抓微博的时间戳
 
         root.title("东方财富股吧 + 推特 监控 · 桌面版")
         root.geometry("1180x700")
@@ -208,6 +209,7 @@ class MonitorApp:
             cfg = monitor.load_config()
             n = len(cfg.get("users", []))
             tw = len(cfg.get("twitter_users", []))
+            wb = len(cfg.get("weibo_users", []))
             what = []
             if cfg.get("monitor_posts", True):
                 what.append("发帖")
@@ -216,7 +218,9 @@ class MonitorApp:
             txt = "股吧 %d 人(%s) · 间隔 %ds" % (n, "+".join(what),
                                               cfg.get("poll_interval_seconds", 60))
             if tw:
-                txt += "    推特 %d 人 · 间隔 %ds" % (tw, cfg.get("twitter_poll_interval_seconds", 180))
+                txt += "   推特 %d 人 · %ds" % (tw, cfg.get("twitter_poll_interval_seconds", 180))
+            if wb:
+                txt += "   微博 %d 人 · %ds" % (wb, cfg.get("weibo_poll_interval_seconds", 120))
             self.lbl_users.config(text=txt)
         except Exception:
             self.lbl_users.config(text="（config.json 读取失败）")
@@ -242,6 +246,7 @@ class MonitorApp:
         self.first_cycle = True
         self._seeded = set()      # 每次启动都重新按来源做首轮基线
         self._last_tw = 0.0
+        self._last_wb = 0.0
         self.stop_event = threading.Event()   # 给新线程一个全新的停止信号
         my_stop = self.stop_event
         self.btn_start.config(text="停止监控")
@@ -339,6 +344,28 @@ class MonitorApp:
                         continue
                     if items:
                         self._emit(state, "tw:" + handle, name, items)
+                    stop_event.wait(random.uniform(2, 4))
+
+            # —— 微博用户（需登录 cookie；单独节奏）——
+            wb_users = cfg.get("weibo_users", [])
+            wb_cookie = cfg.get("weibo_cookie", "")
+            wb_interval = int(cfg.get("weibo_poll_interval_seconds", 120))
+            if wb_users and wb_cookie and (self.first_cycle or time.time() - self._last_wb >= wb_interval):
+                self._last_wb = time.time()
+                for wu in wb_users:
+                    if stop_event.is_set():
+                        break
+                    uid = str(wu.get("uid") or "")
+                    if not uid:
+                        continue
+                    name = wu.get("name") or ("微博" + uid)
+                    try:
+                        items = monitor.parse_weibo(uid, wb_cookie)
+                    except Exception as e:
+                        self.q.put(("status", "抓微博 %s 失败：%s" % (name, str(e)[:80])))
+                        continue
+                    if items:
+                        self._emit(state, "wb:" + uid, name, items)
                     stop_event.wait(random.uniform(2, 4))
 
             monitor.save_state(state)
@@ -449,7 +476,8 @@ class MonitorApp:
         except Exception:
             cfg = {}
         groups = cfg.get("groups", {}) or {}
-        for u in (cfg.get("users", []) or []) + (cfg.get("twitter_users", []) or []):
+        for u in ((cfg.get("users", []) or []) + (cfg.get("twitter_users", []) or [])
+                  + (cfg.get("weibo_users", []) or [])):
             name = u.get("name") or u.get("uid") or u.get("handle")
             if not name:
                 continue
@@ -553,7 +581,8 @@ class MonitorApp:
         body.pack(fill="both", expand=True, padx=16)
 
         rows = [("股吧", u) for u in cfg.get("users", [])] + \
-               [("推特", u) for u in cfg.get("twitter_users", [])]
+               [("推特", u) for u in cfg.get("twitter_users", [])] + \
+               [("微博", u) for u in cfg.get("weibo_users", [])]
         groups = cfg.get("groups", {}) or {}
         pend = {}
         previews = {}
@@ -600,7 +629,8 @@ class MonitorApp:
             self._hl(sw_list, cur)
 
         def save():
-            for u in cfg.get("users", []) + cfg.get("twitter_users", []):
+            for u in (cfg.get("users", []) + cfg.get("twitter_users", [])
+                      + cfg.get("weibo_users", [])):
                 nm = u.get("name") or u.get("uid") or u.get("handle")
                 c = pend.get(nm)
                 if c:
