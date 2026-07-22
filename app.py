@@ -92,6 +92,8 @@ class MonitorApp:
         self._setup_style()
         self._build_ui()
         self._poll_queue()
+        # 打开即自动开始监控（省去手动点「开始监控」；可随时点「停止监控」暂停）
+        self.root.after(800, lambda: self.start(silent=True))
 
     # ---------- 样式 ----------
     def _setup_style(self):
@@ -229,14 +231,16 @@ class MonitorApp:
     def toggle(self):
         self.stop() if self.running else self.start()
 
-    def start(self):
+    def start(self, silent=False):
         try:
             cfg = monitor.load_config()
-            if not cfg.get("users"):
-                messagebox.showwarning("提示", "config.json 里还没有配置要监控的用户。")
+            if not (cfg.get("users") or cfg.get("twitter_users") or cfg.get("weibo_users")):
+                if not silent:
+                    messagebox.showwarning("提示", "config.json 里还没有配置要监控的用户。")
                 return
         except Exception as e:
-            messagebox.showerror("配置错误", "读取 config.json 失败：\n%s" % e)
+            if not silent:
+                messagebox.showerror("配置错误", "读取 config.json 失败：\n%s" % e)
             return
         # 先确保没有旧线程还在跑（避免重复推送）
         if self.worker and self.worker.is_alive():
