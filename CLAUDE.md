@@ -91,6 +91,14 @@ tkinter Treeview 的 tag **只能按整行设置**，做不到单元格级配色
 
 始终排除（即使被放行）：`config.json`（含 UID/Cookie/推送 key）、`state.json`、`*.log`。
 
+## Git 工作流
+
+每完成一个可独立描述的改动，立刻 `git add -A && git commit`。
+
+commit message 用 conventional commits 格式，说明"为什么"而非"改了什么"。
+
+提交后 `git push`，除非当前在 main/master 分支。
+
 ## 数据源
 
 - 股吧发帖/转发：`i.eastmoney.com/api/guba/userdynamiclistv2`（`type=1`）。**必须用这个而非 `fullarticlelist`**——后者只返回财富号文章，会漏掉股吧短帖。
