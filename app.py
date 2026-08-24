@@ -35,7 +35,6 @@ MERGE_LIMIT = 8  # 一轮内同一用户新增超过这么多条才合并通知�
 
 # ---- 配色 ----
 C_BG = "#ffffff"
-C_STRIPE = "#f4f6fa"
 C_HEAD_BG = "#2b3a55"
 C_HEAD_FG = "#ffffff"
 C_SEL = "#cfe0ff"
@@ -45,6 +44,15 @@ C_REPLY = "#1d4ed8"   # 评论 蓝
 C_REPOST = "#c2620a"  # 转发 橙
 C_TWEET = "#7c3aed"   # 推文 紫
 C_HIST = "#566072"    # 历史 深灰（可清晰阅读）
+
+# 按「类型」区分的浅色行底色（与文字色同色系但很淡，用户自定义配色只管文字，不影响这层）
+KIND_BG = {
+    "发帖": "#e4f5ec",
+    "评论": "#e9eefb",
+    "转发": "#fdf1e2",
+    "转推": "#fdf1e2",
+    "推文": "#f3ecfb",
+}
 
 # 自定义可选颜色：取自「中国传统色」，色相分明且白底上当文字清晰可读
 PALETTE = [
@@ -175,8 +183,8 @@ class MonitorApp:
             self.tree.heading(c, text=txt, anchor="w")
             self.tree.column(c, width=w, anchor=anc, stretch=(c == "content"))
 
-        self.tree.tag_configure("stripe_even", background=C_BG)
-        self.tree.tag_configure("stripe_odd", background=C_STRIPE)
+        for kind, bg in KIND_BG.items():
+            self.tree.tag_configure("bg_" + kind, background=bg)
         self.tree.tag_configure("post", foreground=C_POST)
         self.tree.tag_configure("reply", foreground=C_REPLY)
         self.tree.tag_configure("repost", foreground=C_REPOST)
@@ -452,9 +460,16 @@ class MonitorApp:
         content = it["content"] or it["title"] or "(无正文)"
         if it["kind"] == "评论" and it["ctx_text"]:
             content = "[评论《%s》] %s" % (it["ctx_text"][:14], content)
+        elif it["kind"] in ("转发", "转推") and (it["ctx_user"] or it["ctx_text"]):
+            ctx_user = it["ctx_user"] or "?"
+            if it["ctx_text"]:
+                content = "[转发自 %s《%s》] %s" % (ctx_user, it["ctx_text"][:14], content)
+            else:
+                content = "[转推自 %s] %s" % (ctx_user, content)
         content = content.replace("\n", " ").replace("\r", " ").strip()
         self.items.append({
             "key": it["key"], "name": name, "kind": it["kind"],
+            "icon": it.get("icon") or "",
             "time": it["time"] or "", "bar": it["bar"] or "—",
             "content": content, "link": it["link"],
         })
@@ -500,6 +515,10 @@ class MonitorApp:
         return {"发帖": "post", "评论": "reply", "转发": "repost",
                 "推文": "tweet", "转推": "tweet"}.get(kind, "")
 
+    @staticmethod
+    def _resolve_bg(kind):
+        return "bg_" + kind if kind in KIND_BG else ""
+
     # —— 重建列表（扁平 + 日期表头 + 自定义折叠）——
     def _rebuild(self):
         self._refresh_config_maps()
@@ -533,14 +552,15 @@ class MonitorApp:
             self.header_date[hid] = date
             if collapsed:
                 continue
-            for j, it in enumerate(rows):
+            for it in rows:
                 seq += 1
                 iid = "r%d" % seq
-                stripe = "stripe_odd" if j % 2 else "stripe_even"
+                kind_txt = ("%s %s" % (it.get("icon") or "", it["kind"])).strip()
                 self.tree.insert("", "end", iid=iid,
                                  values=(it["time"][11:16], it["name"],
-                                         "● " + it["kind"], it["bar"], it["content"]),
-                                 tags=(self._resolve_fg(it["name"], it["kind"]), stripe))
+                                         kind_txt, it["bar"], it["content"]),
+                                 tags=(self._resolve_bg(it["kind"]),
+                                       self._resolve_fg(it["name"], it["kind"])))
                 self.row_link[iid] = it["link"]
         if at_bottom:
             self.tree.yview_moveto(1.0)
