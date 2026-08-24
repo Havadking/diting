@@ -43,6 +43,8 @@ appmod.monitor.load_config = lambda: {"users": [...]}       # 跳过 config.json
 - **`app.py`** — 桌面 GUI，主要维护对象。三个数据源全支持。
 - **`monitor.py`** — 双重身份：① 被 `app.py` import 的抓取/解析核心；② 独立的命令行推送版（`main()`）。注意 **`monitor.py` 的命令行 `main()` 只处理股吧用户**，推特/微博是 GUI 独有的。改抓取逻辑时两边都受影响，改轮询逻辑时通常只动 `app.py`。
 
+`app.py` 顶部的 `ENABLE_TWITTER` / `ENABLE_WEIBO` 目前是 `False`——推特/微博功能暂时下线（不轮询、UI 也不提），但代码和 `monitor.py` 里的抓取逻辑都完整保留，改成 `True` 即可恢复。改 `app.py` 里任何"用户列表"相关的地方（`_run_loop`、`_refresh_user_label`、`open_colors` 的 `rows`/`editable_users`）时留意这两个开关，别让隐藏的来源重新泄漏到 UI，也别让 `open_colors` 的保存逻辑遍历到没渲染出来的用户而误清空他们的配置。
+
 ### 统一 item 字典是跨文件契约
 
 `monitor.py` 的三个解析函数 `parse_posts()` / `parse_replies()`（股吧）、`parse_tweets()`（推特）、`parse_weibo()`（微博）都归一化成同一种 dict，`app.py` 才能混排渲染：
