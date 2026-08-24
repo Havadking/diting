@@ -39,6 +39,10 @@ ERR_LOG = os.path.join(BASE_DIR, "gui_error.log")
 MAX_ROWS = 1000
 MERGE_LIMIT = 8  # 一轮内同一用户新增超过这么多条才合并通知，否则逐条弹
 
+# 推特/微博监控功能暂时下线（不抓取、UI 也不显示相关内容），代码保留，改回 True 即可恢复
+ENABLE_TWITTER = False
+ENABLE_WEIBO = False
+
 # ---- 配色（Fluent 风格浅色：中性灰底 + 白色内容卡片 + 蓝色强调）----
 C_PAGE = "#f3f3f3"    # 窗口/工具栏/状态栏 底色
 C_BG = "#ffffff"      # 列表、对话框等内容卡片底色
@@ -101,7 +105,7 @@ class MonitorApp:
         self._last_tw = 0.0       # 上次抓推特的时间戳
         self._last_wb = 0.0       # 上次抓微博的时间戳
 
-        root.title("东方财富股吧 + 推特 监控 · 桌面版")
+        root.title("东方财富股吧监控 · 桌面版")
         root.geometry("1180x700")
         root.configure(bg=C_PAGE)
         self._setup_style()
@@ -245,9 +249,9 @@ class MonitorApp:
                 what.append("评论")
             txt = "股吧 %d 人(%s) · 间隔 %ds" % (n, "+".join(what),
                                               cfg.get("poll_interval_seconds", 60))
-            if tw:
+            if ENABLE_TWITTER and tw:
                 txt += "   推特 %d 人 · %ds" % (tw, cfg.get("twitter_poll_interval_seconds", 180))
-            if wb:
+            if ENABLE_WEIBO and wb:
                 txt += "   微博 %d 人 · %ds" % (wb, cfg.get("weibo_poll_interval_seconds", 120))
             self.lbl_users.config(text=txt)
         except Exception:
@@ -260,7 +264,9 @@ class MonitorApp:
     def start(self, silent=False):
         try:
             cfg = monitor.load_config()
-            if not (cfg.get("users") or cfg.get("twitter_users") or cfg.get("weibo_users")):
+            has_tw = ENABLE_TWITTER and cfg.get("twitter_users")
+            has_wb = ENABLE_WEIBO and cfg.get("weibo_users")
+            if not (cfg.get("users") or has_tw or has_wb):
                 if not silent:
                     messagebox.showwarning("提示", "config.json 里还没有配置要监控的用户。")
                 return
@@ -356,7 +362,7 @@ class MonitorApp:
                 stop_event.wait(random.uniform(2, 4))
 
             # —— 推特用户（单独的慢节奏，降低风控/封号风险）——
-            tw_users = cfg.get("twitter_users", [])
+            tw_users = cfg.get("twitter_users", []) if ENABLE_TWITTER else []
             tw_interval = int(cfg.get("twitter_poll_interval_seconds", 180))
             if tw_users and (self.first_cycle or time.time() - self._last_tw >= tw_interval):
                 self._last_tw = time.time()
@@ -377,7 +383,7 @@ class MonitorApp:
                     stop_event.wait(random.uniform(2, 4))
 
             # —— 微博用户（需登录 cookie；单独节奏）——
-            wb_users = cfg.get("weibo_users", [])
+            wb_users = cfg.get("weibo_users", []) if ENABLE_WEIBO else []
             wb_cookie = cfg.get("weibo_cookie", "")
             wb_interval = int(cfg.get("weibo_poll_interval_seconds", 120))
             if wb_users and wb_cookie and (self.first_cycle or time.time() - self._last_wb >= wb_interval):
@@ -475,15 +481,17 @@ class MonitorApp:
         if it["key"] in self.item_keys:
             return
         self.item_keys.add(it["key"])
-        content = it["content"] or it["title"] or "(无正文)"
+        raw = (it["content"] or it["title"] or "").strip()
         if it["kind"] == "评论" and it["ctx_text"]:
-            content = "[评论《%s》] %s" % (it["ctx_text"][:14], content)
+            content = "[评论《%s》] %s" % (it["ctx_text"][:14], raw or "(无正文)")
         elif it["kind"] in ("转发", "转推") and (it["ctx_user"] or it["ctx_text"]):
             ctx_user = it["ctx_user"] or "?"
             if it["ctx_text"]:
-                content = "[转发自 %s《%s》] %s" % (ctx_user, it["ctx_text"][:14], content)
+                content = ("[转发自 %s《%s》] %s" % (ctx_user, it["ctx_text"][:14], raw)).rstrip()
             else:
-                content = "[转推自 %s] %s" % (ctx_user, content)
+                content = ("[转推自 %s] %s" % (ctx_user, raw)).rstrip()
+        else:
+            content = raw or "(无正文)"
         content = content.replace("\n", " ").replace("\r", " ").strip()
         self.items.append({
             "key": it["key"], "name": name, "kind": it["kind"],
@@ -622,9 +630,16 @@ class MonitorApp:
         body = tk.Frame(win, bg=C_BG)
         body.pack(fill="both", expand=True, padx=16)
 
-        rows = [("股吧", u) for u in cfg.get("users", [])] + \
-               [("推特", u) for u in cfg.get("twitter_users", [])] + \
-               [("微博", u) for u in cfg.get("weibo_users", [])]
+        # 编辑对象要和 save() 里写回的对象保持一致——推特/微博下线期间不显示也不写回，
+        # 否则会把这些用户已有的配色/静音设置当作"没勾选"给清空。
+        editable_users = list(cfg.get("users", []))
+        rows = [("股吧", u) for u in cfg.get("users", [])]
+        if ENABLE_TWITTER:
+            editable_users += cfg.get("twitter_users", [])
+            rows += [("推特", u) for u in cfg.get("twitter_users", [])]
+        if ENABLE_WEIBO:
+            editable_users += cfg.get("weibo_users", [])
+            rows += [("微博", u) for u in cfg.get("weibo_users", [])]
         groups = cfg.get("groups", {}) or {}
         pend = {}
         previews = {}
@@ -671,8 +686,7 @@ class MonitorApp:
             self._hl(sw_list, cur)
 
         def save():
-            for u in (cfg.get("users", []) + cfg.get("twitter_users", [])
-                      + cfg.get("weibo_users", [])):
+            for u in editable_users:
                 nm = u.get("name") or u.get("uid") or u.get("handle")
                 c = pend.get(nm)
                 if c:
