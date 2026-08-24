@@ -39,30 +39,26 @@ ERR_LOG = os.path.join(BASE_DIR, "gui_error.log")
 MAX_ROWS = 1000
 MERGE_LIMIT = 8  # 一轮内同一用户新增超过这么多条才合并通知，否则逐条弹
 
-# 推特/微博监控功能暂时下线（不抓取、UI 也不显示相关内容），代码保留，改回 True 即可恢复
-ENABLE_TWITTER = False
-ENABLE_WEIBO = False
-
 # ---- 配色（Fluent 风格浅色：中性灰底 + 白色内容卡片 + 蓝色强调）----
 C_PAGE = "#f3f3f3"    # 窗口/工具栏/状态栏 底色
 C_BG = "#ffffff"      # 列表、对话框等内容卡片底色
 C_HEAD_BG = "#f6f6f7"
 C_HEAD_FG = "#1c1c1c"
+C_SEL = "#dbeafe"
 C_TOOLBAR = C_PAGE
-C_TEXT = "#1c1c1c"    # 内容主文字
-C_MUTED = "#6b7280"   # 类型/时间等次要文字
-C_MUTED2 = "#9aa1ac"  # 来源名，比 C_MUTED 更淡
-C_BORDER = "#ececec"  # 行与行之间的分隔线
 C_POST = "#0a8f5b"    # 发帖 绿
 C_REPLY = "#1d4ed8"   # 评论 蓝
 C_REPOST = "#c2620a"  # 转发 橙
 C_TWEET = "#7c3aed"   # 推文 紫
-C_HIST = "#566072"    # 兜底深灰（未知类型的色点）
+C_HIST = "#566072"    # 历史 深灰（可清晰阅读）
 
-# 类型用一个小色点表示（不再整行上底色），色点颜色复用上面几个类型色
-KIND_DOT = {
-    "发帖": C_POST, "评论": C_REPLY, "转发": C_REPOST,
-    "转推": C_REPOST, "推文": C_TWEET,
+# 按「类型」区分的浅色行底色（与文字色同色系但很淡，用户自定义配色只管文字，不影响这层）
+KIND_BG = {
+    "发帖": "#e4f5ec",
+    "评论": "#e9eefb",
+    "转发": "#fdf1e2",
+    "转推": "#fdf1e2",
+    "推文": "#f3ecfb",
 }
 
 # 自定义可选颜色：取自「中国传统色」，色相分明且白底上当文字清晰可读
@@ -95,14 +91,17 @@ class MonitorApp:
         self._seeded = set()      # 已完成首轮基线的来源(skey)，按来源分别 seed
         self.items = []           # 数据模型：所有动态(dict)
         self.item_keys = set()    # 去重
+        self.row_link = {}        # iid -> 链接（每次重建）
+        self.header_date = {}     # 日期表头 iid -> 日期
         self.user_collapsed = {}  # 日期 -> 是否折叠（用户手动覆盖）
+        self._color_tags = set()  # 已创建的颜色 tag
         self._color_map = {}      # 用户名 -> 颜色
         self._muted = set()       # 被静音(只收不提示)的用户名
         self._dirty = False
         self._last_tw = 0.0       # 上次抓推特的时间戳
         self._last_wb = 0.0       # 上次抓微博的时间戳
 
-        root.title("东方财富股吧监控 · 桌面版")
+        root.title("东方财富股吧 + 推特 监控 · 桌面版")
         root.geometry("1180x700")
         root.configure(bg=C_PAGE)
         self._setup_style()
@@ -132,11 +131,16 @@ class MonitorApp:
                 pass
 
         if HAS_THEME:
-            # sv_ttk 已经把按钮画成圆角，这里只调字体，不再覆盖 background/relief，
-            # 否则会把它的圆角边框图片盖掉。
+            # sv_ttk 已经把 Treeview 画成白色卡片、按钮画成圆角，这里只调字体/行高，
+            # 不再覆盖 background/relief，否则会把它的圆角边框图片盖掉。
+            st.configure("Treeview", font=self.f_base, rowheight=42)
             st.configure("Tool.TButton", font=self.f_base, padding=(14, 7))
             st.configure("Accent.TButton", font=self.f_bold, padding=(16, 7))
         else:
+            st.configure("Treeview",
+                         font=self.f_base, rowheight=42,
+                         background=C_BG, fieldbackground=C_BG, foreground="#1c2330",
+                         borderwidth=0, relief="flat")
             # 现代扁平按钮（无主题库时的手工退路）
             st.configure("Tool.TButton", font=self.f_base, relief="flat",
                          padding=(14, 7), background="#ffffff", borderwidth=1)
@@ -147,6 +151,13 @@ class MonitorApp:
                          borderwidth=0)
             st.map("Accent.TButton",
                    background=[("active", "#1d4fd0"), ("pressed", "#1a44b8")])
+        st.map("Treeview",
+               background=[("selected", C_SEL)],
+               foreground=[("selected", "#111")])
+        st.configure("Treeview.Heading",
+                     font=self.f_bold, relief="flat",
+                     background=C_HEAD_BG, foreground=C_HEAD_FG, padding=(8, 6))
+        st.map("Treeview.Heading", background=[("active", "#eaeaeb")])
 
     # ---------- 界面 ----------
     def _build_ui(self):
@@ -177,50 +188,38 @@ class MonitorApp:
 
         tk.Frame(self.root, bg="#e3e3e3", height=1).pack(fill="x")
 
-        # 列表：自绘极简列表（无网格线，类型用色点表示，不用 Treeview）
+        # 列表
         mid = tk.Frame(self.root, bg=C_PAGE)
         mid.pack(fill="both", expand=True, padx=12, pady=(8, 0))
 
-        card = tk.Frame(mid, bg=C_BG, highlightthickness=1, highlightbackground="#e3e3e3")
-        card.pack(fill="both", expand=True)
+        cols = ("time", "user", "kind", "bar", "content")
+        self.tree = ttk.Treeview(mid, columns=cols, show="headings", selectmode="browse")
+        layout = [("time", "时间 / 日期", 138, "w"), ("user", "用户", 130, "w"),
+                  ("kind", "类型", 84, "w"), ("bar", "来源", 140, "w"),
+                  ("content", "内容（双击打开原文）", 520, "w")]
+        for c, txt, w, anc in layout:
+            self.tree.heading(c, text=txt, anchor="w")
+            self.tree.column(c, width=w, anchor=anc, stretch=(c == "content"))
 
-        # 每列的（key, 表头文字, 像素宽度），"内容"列不在这里——它占满剩余空间
-        self.COLS = [("time", "时间", 52), ("user", "用户", 92),
-                     ("kind", "类型", 44), ("bar", "来源", 108)]
-        self.CELL_H = 22   # 每行文字格子的高度
-        self.ROW_PADY = 9  # 行的上下留白，加上 CELL_H 就是整行高度
+        for kind, bg in KIND_BG.items():
+            self.tree.tag_configure("bg_" + kind, background=bg)
+        self.tree.tag_configure("post", foreground=C_POST)
+        self.tree.tag_configure("reply", foreground=C_REPLY)
+        self.tree.tag_configure("repost", foreground=C_REPOST)
+        self.tree.tag_configure("tweet", foreground=C_TWEET)
+        self.tree.tag_configure("hist", foreground=C_HIST)
+        # 日期分组表头样式
+        self.tree.tag_configure("datehdr", background="#f0f1f3",
+                                foreground="#3c4147", font=self.f_bold)
+        self.tree.tag_configure("datehdr_today", background="#e4edfb",
+                                foreground="#0b57a4", font=self.f_bold)
 
-        head = tk.Frame(card, bg=C_HEAD_BG)
-        head.pack(fill="x")
-        tk.Frame(head, width=14, height=30, bg=C_HEAD_BG).pack(side="left")  # 对齐色点位置
-        for _key, txt, w in self.COLS:
-            slot = tk.Frame(head, width=w, height=30, bg=C_HEAD_BG)
-            slot.pack_propagate(False)
-            slot.pack(side="left")
-            tk.Label(slot, text=txt, font=self.f_bold, bg=C_HEAD_BG,
-                     fg=C_HEAD_FG, anchor="w").pack(side="left", padx=(2, 0))
-        tk.Label(head, text="内容（双击打开原文）", font=self.f_bold, bg=C_HEAD_BG,
-                 fg=C_HEAD_FG, anchor="w").pack(side="left", padx=(10, 0), pady=6)
-
-        scroll_wrap = tk.Frame(card, bg=C_BG)
-        scroll_wrap.pack(fill="both", expand=True)
-        self.canvas = tk.Canvas(scroll_wrap, bg=C_BG, highlightthickness=0)
-        vsb = ttk.Scrollbar(scroll_wrap, orient="vertical", command=self.canvas.yview)
-        self.canvas.configure(yscrollcommand=vsb.set)
-        self.canvas.pack(side="left", fill="both", expand=True)
+        vsb = ttk.Scrollbar(mid, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
+        self.tree.pack(side="left", fill="both", expand=True)
         vsb.pack(side="right", fill="y")
-
-        self.list_body = tk.Frame(self.canvas, bg=C_BG)
-        self._list_win = self.canvas.create_window((0, 0), window=self.list_body, anchor="nw")
-        self.list_body.bind("<Configure>",
-                            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-        self.canvas.bind("<Configure>",
-                         lambda e: self.canvas.itemconfig(self._list_win, width=e.width))
-
-        def _wheel(e):
-            self.canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
-        self.canvas.bind("<Enter>", lambda e: self.canvas.bind_all("<MouseWheel>", _wheel))
-        self.canvas.bind("<Leave>", lambda e: self.canvas.unbind_all("<MouseWheel>"))
+        self.tree.bind("<Double-1>", self.open_selected)
+        self.tree.bind("<Button-1>", self._on_header_click, add="+")
 
         # 状态栏
         bar = tk.Frame(self.root, bg=C_TOOLBAR)
@@ -246,9 +245,9 @@ class MonitorApp:
                 what.append("评论")
             txt = "股吧 %d 人(%s) · 间隔 %ds" % (n, "+".join(what),
                                               cfg.get("poll_interval_seconds", 60))
-            if ENABLE_TWITTER and tw:
+            if tw:
                 txt += "   推特 %d 人 · %ds" % (tw, cfg.get("twitter_poll_interval_seconds", 180))
-            if ENABLE_WEIBO and wb:
+            if wb:
                 txt += "   微博 %d 人 · %ds" % (wb, cfg.get("weibo_poll_interval_seconds", 120))
             self.lbl_users.config(text=txt)
         except Exception:
@@ -261,9 +260,7 @@ class MonitorApp:
     def start(self, silent=False):
         try:
             cfg = monitor.load_config()
-            has_tw = ENABLE_TWITTER and cfg.get("twitter_users")
-            has_wb = ENABLE_WEIBO and cfg.get("weibo_users")
-            if not (cfg.get("users") or has_tw or has_wb):
+            if not (cfg.get("users") or cfg.get("twitter_users") or cfg.get("weibo_users")):
                 if not silent:
                     messagebox.showwarning("提示", "config.json 里还没有配置要监控的用户。")
                 return
@@ -305,11 +302,16 @@ class MonitorApp:
             messagebox.showinfo("配置文件路径", monitor.CONFIG_PATH)
 
     def clear_list(self):
-        for w in self.list_body.winfo_children():
-            w.destroy()
+        self.tree.delete(*self.tree.get_children())
         self.items.clear()
         self.item_keys.clear()
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        self.row_link.clear()
+        self.header_date.clear()
+
+    def open_selected(self, _e=None):
+        sel = self.tree.selection()
+        if sel and self.row_link.get(sel[0]):
+            webbrowser.open(self.row_link[sel[0]])
 
     # ---------- 后台线程 ----------
     def _emit(self, state, skey, name, items):
@@ -354,7 +356,7 @@ class MonitorApp:
                 stop_event.wait(random.uniform(2, 4))
 
             # —— 推特用户（单独的慢节奏，降低风控/封号风险）——
-            tw_users = cfg.get("twitter_users", []) if ENABLE_TWITTER else []
+            tw_users = cfg.get("twitter_users", [])
             tw_interval = int(cfg.get("twitter_poll_interval_seconds", 180))
             if tw_users and (self.first_cycle or time.time() - self._last_tw >= tw_interval):
                 self._last_tw = time.time()
@@ -375,7 +377,7 @@ class MonitorApp:
                     stop_event.wait(random.uniform(2, 4))
 
             # —— 微博用户（需登录 cookie；单独节奏）——
-            wb_users = cfg.get("weibo_users", []) if ENABLE_WEIBO else []
+            wb_users = cfg.get("weibo_users", [])
             wb_cookie = cfg.get("weibo_cookie", "")
             wb_interval = int(cfg.get("weibo_poll_interval_seconds", 120))
             if wb_users and wb_cookie and (self.first_cycle or time.time() - self._last_wb >= wb_interval):
@@ -431,12 +433,12 @@ class MonitorApp:
             self._rebuild()
             self._dirty = False
             if scroll_needed and at_bottom:
-                self.canvas.yview_moveto(1.0)
+                self.tree.yview_moveto(1.0)
         self.root.after(400, self._poll_queue)
 
     def _at_bottom(self):
         try:
-            return self.canvas.yview()[1] >= 0.985
+            return self.tree.yview()[1] >= 0.985
         except Exception:
             return True
 
@@ -473,17 +475,15 @@ class MonitorApp:
         if it["key"] in self.item_keys:
             return
         self.item_keys.add(it["key"])
-        raw = (it["content"] or it["title"] or "").strip()
+        content = it["content"] or it["title"] or "(无正文)"
         if it["kind"] == "评论" and it["ctx_text"]:
-            content = "[评论《%s》] %s" % (it["ctx_text"][:14], raw or "(无正文)")
+            content = "[评论《%s》] %s" % (it["ctx_text"][:14], content)
         elif it["kind"] in ("转发", "转推") and (it["ctx_user"] or it["ctx_text"]):
             ctx_user = it["ctx_user"] or "?"
             if it["ctx_text"]:
-                content = ("[转发自 %s《%s》] %s" % (ctx_user, it["ctx_text"][:14], raw)).rstrip()
+                content = "[转发自 %s《%s》] %s" % (ctx_user, it["ctx_text"][:14], content)
             else:
-                content = ("[转推自 %s] %s" % (ctx_user, raw)).rstrip()
-        else:
-            content = raw or "(无正文)"
+                content = "[转推自 %s] %s" % (ctx_user, content)
         content = content.replace("\n", " ").replace("\r", " ").strip()
         self.items.append({
             "key": it["key"], "name": name, "kind": it["kind"],
@@ -496,6 +496,13 @@ class MonitorApp:
     @staticmethod
     def _today():
         return datetime.now().strftime("%Y-%m-%d")
+
+    def _color_tag(self, hexcolor):
+        tag = "c_" + hexcolor.lstrip("#")
+        if tag not in self._color_tags:
+            self.tree.tag_configure(tag, foreground=hexcolor)
+            self._color_tags.add(tag)
+        return tag
 
     def _refresh_config_maps(self):
         """从配置生成 用户名->颜色 及 静音用户集合。"""
@@ -519,28 +526,18 @@ class MonitorApp:
         self._color_map = m
         self._muted = muted
 
-    def _resolve_fg(self, name):
-        return self._color_map.get(name) or C_TEXT
+    def _resolve_fg(self, name, kind):
+        c = self._color_map.get(name)
+        if c:
+            return self._color_tag(c)
+        return {"发帖": "post", "评论": "reply", "转发": "repost",
+                "推文": "tweet", "转推": "tweet"}.get(kind, "")
 
     @staticmethod
-    def _elide(text, fnt, max_px):
-        """按像素宽度截断文字，超出的用「…」代替（tkinter Label 不会自动省略号）。"""
-        text = text or ""
-        if fnt.measure(text) <= max_px:
-            return text
-        while text and fnt.measure(text + "…") > max_px:
-            text = text[:-1]
-        return (text + "…") if text else "…"
+    def _resolve_bg(kind):
+        return "bg_" + kind if kind in KIND_BG else ""
 
-    @staticmethod
-    def _bind_recursive(widget, seq, handler):
-        """给一个 Frame 行和它所有子控件都绑定同一个事件——tkinter 的鼠标事件
-        不会像网页那样从子控件冒泡到父控件，双击/悬停手型必须逐个控件绑。"""
-        widget.bind(seq, handler)
-        for c in widget.winfo_children():
-            MonitorApp._bind_recursive(c, seq, handler)
-
-    # —— 重建列表（自绘 Frame 行 + 日期表头 + 自定义折叠）——
+    # —— 重建列表（扁平 + 日期表头 + 自定义折叠）——
     def _rebuild(self):
         self._refresh_config_maps()
         if len(self.items) > MAX_ROWS:
@@ -550,92 +547,48 @@ class MonitorApp:
             self.items = self.items[len(self.items) - MAX_ROWS:]
 
         at_bottom = self._at_bottom()
-        for w in self.list_body.winfo_children():
-            w.destroy()
+        self.tree.delete(*self.tree.get_children())
+        self.row_link.clear()
+        self.header_date.clear()
 
         groups = defaultdict(list)
         for it in self.items:
             groups[(it["time"][:10] or "未知日期")].append(it)
 
         today = self._today()
-        avail_w = max(self.canvas.winfo_width(), 900)
-        fixed_w = 14 + sum(w for _k, _t, w in self.COLS) + 14 + 10 + 8 + 24
-        content_w = max(avail_w - fixed_w, 160)
-
+        seq = 0
         for date in sorted(groups):
             rows = sorted(groups[date], key=lambda x: x["time"])
             collapsed = self.user_collapsed.get(date, date != today)
-            self._build_date_header(date, rows, collapsed, today)
+            arrow = "▶" if collapsed else "▼"
+            mark = "今天 " if date == today else ""
+            hid = "h_" + date.replace("-", "")
+            self.tree.insert("", "end", iid=hid,
+                             values=("%s %s" % (arrow, date),
+                                     "%s(%d)" % (mark, len(rows)), "", "", ""),
+                             tags=("datehdr_today" if date == today else "datehdr",))
+            self.header_date[hid] = date
             if collapsed:
                 continue
             for it in rows:
-                self._build_row(it, content_w)
-
-        self.list_body.update_idletasks()
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+                seq += 1
+                iid = "r%d" % seq
+                kind_txt = ("%s %s" % (it.get("icon") or "", it["kind"])).strip()
+                self.tree.insert("", "end", iid=iid,
+                                 values=(it["time"][11:16], it["name"],
+                                         kind_txt, it["bar"], it["content"]),
+                                 tags=(self._resolve_bg(it["kind"]),
+                                       self._resolve_fg(it["name"], it["kind"])))
+                self.row_link[iid] = it["link"]
         if at_bottom:
-            self.canvas.yview_moveto(1.0)
+            self.tree.yview_moveto(1.0)
 
-    def _build_date_header(self, date, rows, collapsed, today):
-        arrow = "▶" if collapsed else "▼"
-        mark = "今天 " if date == today else ""
-        bg = "#e4edfb" if date == today else "#f0f1f3"
-        fg = "#0b57a4" if date == today else "#3c4147"
-        hdr = tk.Frame(self.list_body, bg=bg, cursor="hand2")
-        hdr.pack(fill="x")
-        lbl = tk.Label(hdr, text="%s %s   %s(%d)" % (arrow, date, mark, len(rows)),
-                       font=self.f_bold, bg=bg, fg=fg, anchor="w", padx=14, pady=8,
-                       cursor="hand2")
-        lbl.pack(fill="x")
-
-        def _toggle(_e=None, d=date):
+    def _on_header_click(self, event):
+        row = self.tree.identify_row(event.y)
+        if row in self.header_date:
+            d = self.header_date[row]
             self.user_collapsed[d] = not self.user_collapsed.get(d, d != self._today())
             self._rebuild()
-
-        self._bind_recursive(hdr, "<Button-1>", _toggle)
-
-    def _build_row(self, it, content_w):
-        fg_name = self._resolve_fg(it["name"])
-        dot_color = KIND_DOT.get(it["kind"], C_HIST)
-
-        row = tk.Frame(self.list_body, bg=C_BG, cursor="hand2")
-        row.pack(fill="x")
-        inner = tk.Frame(row, bg=C_BG, cursor="hand2")
-        inner.pack(fill="x", padx=(14, 10), pady=self.ROW_PADY)
-
-        dotwrap = tk.Frame(inner, width=14, height=self.CELL_H, bg=C_BG, cursor="hand2")
-        dotwrap.pack_propagate(False)
-        dotwrap.pack(side="left")
-        dot = tk.Canvas(dotwrap, width=8, height=8, bg=C_BG, highlightthickness=0,
-                        cursor="hand2")
-        dot.create_oval(1, 1, 7, 7, fill=dot_color, outline=dot_color)
-        dot.pack(anchor="w")
-
-        def _cell(text, w, fg, font=None):
-            slot = tk.Frame(inner, width=w, height=self.CELL_H, bg=C_BG, cursor="hand2")
-            slot.pack_propagate(False)
-            slot.pack(side="left")
-            tk.Label(slot, text=text, font=font or self.f_base, bg=C_BG,
-                     fg=fg, anchor="w", cursor="hand2").pack(side="left", fill="x", padx=(2, 0))
-
-        _cell(it["time"][11:16], 52, C_MUTED)
-        _cell(self._elide(it["name"], self.f_bold, 84), 92, fg_name, font=self.f_bold)
-        _cell(it["kind"], 44, C_MUTED)
-        _cell(self._elide(it["bar"], self.f_base, 100), 108, C_MUTED2)
-
-        content_text = self._elide(it["content"], self.f_base, content_w)
-        lbl_content = tk.Label(inner, text=content_text, font=self.f_base,
-                               bg=C_BG, fg=C_TEXT, anchor="w", cursor="hand2")
-        lbl_content.pack(side="left", fill="x", expand=True, padx=(8, 0))
-
-        tk.Frame(self.list_body, bg=C_BORDER, height=1).pack(fill="x", padx=14)
-
-        link = it["link"]
-
-        def _open(_e=None, url=link):
-            webbrowser.open(url)
-
-        self._bind_recursive(row, "<Double-1>", _open)
 
     # —— 应用内 分组配色 ——
     @staticmethod
@@ -669,16 +622,9 @@ class MonitorApp:
         body = tk.Frame(win, bg=C_BG)
         body.pack(fill="both", expand=True, padx=16)
 
-        # 编辑对象要和 save() 里写回的对象保持一致——推特/微博下线期间不显示也不写回，
-        # 否则会把这些用户已有的配色/静音设置当作"没勾选"给清空。
-        editable_users = list(cfg.get("users", []))
-        rows = [("股吧", u) for u in cfg.get("users", [])]
-        if ENABLE_TWITTER:
-            editable_users += cfg.get("twitter_users", [])
-            rows += [("推特", u) for u in cfg.get("twitter_users", [])]
-        if ENABLE_WEIBO:
-            editable_users += cfg.get("weibo_users", [])
-            rows += [("微博", u) for u in cfg.get("weibo_users", [])]
+        rows = [("股吧", u) for u in cfg.get("users", [])] + \
+               [("推特", u) for u in cfg.get("twitter_users", [])] + \
+               [("微博", u) for u in cfg.get("weibo_users", [])]
         groups = cfg.get("groups", {}) or {}
         pend = {}
         previews = {}
@@ -725,7 +671,8 @@ class MonitorApp:
             self._hl(sw_list, cur)
 
         def save():
-            for u in editable_users:
+            for u in (cfg.get("users", []) + cfg.get("twitter_users", [])
+                      + cfg.get("weibo_users", [])):
                 nm = u.get("name") or u.get("uid") or u.get("handle")
                 c = pend.get(nm)
                 if c:
