@@ -22,6 +22,7 @@
 # —— 即使被放行也要排除的（含密钥/隐私/运行时产物）——
 config.json
 state.json
+messages.db
 *.log
 _preview.png
 __pycache__/

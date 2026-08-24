@@ -68,6 +68,12 @@ key, kind, icon, time, title, content, bar, ctx_user, ctx_text, link
 
 注意 `monitor.py` 的 `check_user()` 有一套**独立实现**的相同语义（用 `uid not in state` 判首次），两者共享同一个 `state.json`。
 
+### 消息持久化（SQLite）
+
+`state.json` 只存去重用的 `key` 列表，不存消息内容——真正的消息内容存在 `monitor.py` 的 `messages.db`（`get_db()`/`save_message()`/`load_recent_messages()`），表结构就是 `app.py` `self.items` 那种已经处理好的展示字段（`content` 已经拼好「评论于/转发自」前缀），不是 `monitor.py` 解析函数的原始字段，所以直接读出来就能塞回列表，不用重新处理。
+
+只在 `app.py` 主线程读写（启动时 `_load_history_from_db()` 读，`_add_item()` 里写），没开 `check_same_thread=False`，**不要**从 `_run_loop` 那个后台线程直接碰这个连接。`monitor.py` 的独立命令行版目前不写这个库。
+
 ### 线程模型
 
 `app.py` 单后台线程 `_run_loop()` 轮询，通过 `queue.Queue` 把 `("status"|"history"|"new", ...)` 事件传给主线程，主线程 `_poll_queue()` 每 400ms 消费一次并重建列表。**所有 tkinter 调用必须在主线程**。

@@ -10,6 +10,7 @@
 """
 import json
 import os
+import sqlite3
 import sys
 import time
 import random
@@ -28,6 +29,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 STATE_PATH = os.path.join(BASE_DIR, "state.json")
 LOG_PATH = os.path.join(BASE_DIR, "monitor.log")
+DB_PATH = os.path.join(BASE_DIR, "messages.db")
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
@@ -69,6 +71,49 @@ def load_state():
 def save_state(state):
     with open(STATE_PATH, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
+
+
+# ---------- 消息持久化(SQLite) ----------
+# 只存 app.py 渲染用的「成品」字段(标题/来源等已经拼进 content 里了)，方便原样取出来重新显示。
+# 只在主线程用(app.py 只从 _add_item 里写、从启动流程里读)，故意不开 check_same_thread=False。
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("""CREATE TABLE IF NOT EXISTS messages (
+        key TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        icon TEXT,
+        time TEXT NOT NULL,
+        bar TEXT,
+        content TEXT,
+        link TEXT,
+        saved_at TEXT NOT NULL
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_time ON messages(time)")
+    conn.commit()
+    return conn
+
+
+def save_message(conn, entry):
+    """entry 是 app.py self.items 里那种已经处理好的 dict(key/name/kind/icon/time/bar/content/link)。"""
+    conn.execute(
+        "INSERT OR IGNORE INTO messages (key, name, kind, icon, time, bar, content, link, saved_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (entry["key"], entry["name"], entry["kind"], entry.get("icon", ""), entry["time"],
+         entry.get("bar", ""), entry.get("content", ""), entry.get("link", ""),
+         datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+    conn.commit()
+
+
+def load_recent_messages(conn, limit=1000):
+    """按时间取最近 limit 条，返回时按时间升序(旧的在前)，方便直接塞进列表。"""
+    cur = conn.execute(
+        "SELECT key, name, kind, icon, time, bar, content, link FROM messages "
+        "ORDER BY time DESC LIMIT ?", (limit,))
+    cols = ["key", "name", "kind", "icon", "time", "bar", "content", "link"]
+    rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+    rows.reverse()
+    return rows
 
 
 # ---------- 抓取 ----------

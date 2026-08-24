@@ -110,9 +110,34 @@ class MonitorApp:
         root.configure(bg=C_PAGE)
         self._setup_style()
         self._build_ui()
+        self._db = self._open_db()
+        self._load_history_from_db()
         self._poll_queue()
         # 打开即自动开始监控（省去手动点「开始监控」；可随时点「停止监控」暂停）
         self.root.after(800, lambda: self.start(silent=True))
+
+    def _open_db(self):
+        try:
+            return monitor.get_db()
+        except Exception:
+            self.set_status("消息持久化数据库打开失败，本次运行的消息不会被保存。")
+            return None
+
+    def _load_history_from_db(self):
+        """启动时先把 SQLite 里存过的消息直接铺进列表(不弹通知)，再由后台线程去拉新的。"""
+        if not self._db:
+            return
+        try:
+            rows = monitor.load_recent_messages(self._db, MAX_ROWS)
+        except Exception:
+            return
+        for r in rows:
+            if r["key"] in self.item_keys:
+                continue
+            self.item_keys.add(r["key"])
+            self.items.append(r)
+        if rows:
+            self._rebuild()
 
     # ---------- 样式 ----------
     def _setup_style(self):
@@ -493,12 +518,18 @@ class MonitorApp:
         else:
             content = raw or "(无正文)"
         content = content.replace("\n", " ").replace("\r", " ").strip()
-        self.items.append({
+        entry = {
             "key": it["key"], "name": name, "kind": it["kind"],
             "icon": it.get("icon") or "",
             "time": it["time"] or "", "bar": it["bar"] or "—",
             "content": content, "link": it["link"],
-        })
+        }
+        self.items.append(entry)
+        if self._db:
+            try:
+                monitor.save_message(self._db, entry)
+            except Exception:
+                pass
 
     # —— 颜色 ——
     @staticmethod
