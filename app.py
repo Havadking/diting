@@ -27,18 +27,25 @@ try:
 except Exception:
     HAS_TOAST = False
 
+try:
+    import sv_ttk  # 可选：Windows 11 风格现代主题，没装则自动退回旧的手工配色
+    HAS_THEME = True
+except Exception:
+    HAS_THEME = False
+
 APP_ID = "东方财富股吧监控"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ERR_LOG = os.path.join(BASE_DIR, "gui_error.log")
 MAX_ROWS = 1000
 MERGE_LIMIT = 8  # 一轮内同一用户新增超过这么多条才合并通知，否则逐条弹
 
-# ---- 配色 ----
-C_BG = "#ffffff"
-C_HEAD_BG = "#2b3a55"
-C_HEAD_FG = "#ffffff"
-C_SEL = "#cfe0ff"
-C_TOOLBAR = "#f0f2f7"
+# ---- 配色（Fluent 风格浅色：中性灰底 + 白色内容卡片 + 蓝色强调）----
+C_PAGE = "#f3f3f3"    # 窗口/工具栏/状态栏 底色
+C_BG = "#ffffff"      # 列表、对话框等内容卡片底色
+C_HEAD_BG = "#f6f6f7"
+C_HEAD_FG = "#1c1c1c"
+C_SEL = "#dbeafe"
+C_TOOLBAR = C_PAGE
 C_POST = "#0a8f5b"    # 发帖 绿
 C_REPLY = "#1d4ed8"   # 评论 蓝
 C_REPOST = "#c2620a"  # 转发 橙
@@ -96,7 +103,7 @@ class MonitorApp:
 
         root.title("东方财富股吧 + 推特 监控 · 桌面版")
         root.geometry("1180x700")
-        root.configure(bg=C_BG)
+        root.configure(bg=C_PAGE)
         self._setup_style()
         self._build_ui()
         self._poll_queue()
@@ -114,32 +121,43 @@ class MonitorApp:
         self.f_bold = tkfont.Font(family=fam, size=12, weight="bold")
         self.f_title = tkfont.Font(family=fam, size=16, weight="bold")
 
+        if HAS_THEME:
+            sv_ttk.set_theme("light")   # Windows 11 Fluent 风格：圆角按钮/卡片式列表/现代滚动条
         st = ttk.Style()
-        try:
-            st.theme_use("clam")
-        except Exception:
-            pass
-        st.configure("Treeview",
-                     font=self.f_base, rowheight=42,
-                     background=C_BG, fieldbackground=C_BG, foreground="#1c2330",
-                     borderwidth=0, relief="flat")
+        if not HAS_THEME:
+            try:
+                st.theme_use("clam")
+            except Exception:
+                pass
+
+        if HAS_THEME:
+            # sv_ttk 已经把 Treeview 画成白色卡片、按钮画成圆角，这里只调字体/行高，
+            # 不再覆盖 background/relief，否则会把它的圆角边框图片盖掉。
+            st.configure("Treeview", font=self.f_base, rowheight=42)
+            st.configure("Tool.TButton", font=self.f_base, padding=(14, 7))
+            st.configure("Accent.TButton", font=self.f_bold, padding=(16, 7))
+        else:
+            st.configure("Treeview",
+                         font=self.f_base, rowheight=42,
+                         background=C_BG, fieldbackground=C_BG, foreground="#1c2330",
+                         borderwidth=0, relief="flat")
+            # 现代扁平按钮（无主题库时的手工退路）
+            st.configure("Tool.TButton", font=self.f_base, relief="flat",
+                         padding=(14, 7), background="#ffffff", borderwidth=1)
+            st.map("Tool.TButton",
+                   background=[("active", "#e8edf7"), ("pressed", "#dbe4f5")])
+            st.configure("Accent.TButton", font=self.f_bold, relief="flat",
+                         padding=(16, 7), background="#2563eb", foreground="#ffffff",
+                         borderwidth=0)
+            st.map("Accent.TButton",
+                   background=[("active", "#1d4fd0"), ("pressed", "#1a44b8")])
         st.map("Treeview",
                background=[("selected", C_SEL)],
                foreground=[("selected", "#111")])
         st.configure("Treeview.Heading",
                      font=self.f_bold, relief="flat",
                      background=C_HEAD_BG, foreground=C_HEAD_FG, padding=(8, 6))
-        st.map("Treeview.Heading", background=[("active", "#3a4d70")])
-        # 现代扁平按钮
-        st.configure("Tool.TButton", font=self.f_base, relief="flat",
-                     padding=(14, 7), background="#ffffff", borderwidth=1)
-        st.map("Tool.TButton",
-               background=[("active", "#e8edf7"), ("pressed", "#dbe4f5")])
-        st.configure("Accent.TButton", font=self.f_bold, relief="flat",
-                     padding=(16, 7), background="#2563eb", foreground="#ffffff",
-                     borderwidth=0)
-        st.map("Accent.TButton",
-               background=[("active", "#1d4fd0"), ("pressed", "#1a44b8")])
+        st.map("Treeview.Heading", background=[("active", "#eaeaeb")])
 
     # ---------- 界面 ----------
     def _build_ui(self):
@@ -150,7 +168,7 @@ class MonitorApp:
         inner.pack(fill="x", padx=12, pady=10)
 
         tk.Label(inner, text="股吧监控", font=self.f_title,
-                 bg=C_TOOLBAR, fg="#2b3a55").pack(side="left", padx=(0, 14))
+                 bg=C_TOOLBAR, fg="#1c1c1c").pack(side="left", padx=(0, 14))
 
         self.btn_start = ttk.Button(inner, text="开始监控", style="Accent.TButton",
                                     command=self.toggle)
@@ -168,10 +186,10 @@ class MonitorApp:
                                   bg=C_TOOLBAR, fg="#5a6478")
         self.lbl_users.pack(side="right")
 
-        tk.Frame(self.root, bg="#dfe3ea", height=1).pack(fill="x")
+        tk.Frame(self.root, bg="#e3e3e3", height=1).pack(fill="x")
 
         # 列表
-        mid = tk.Frame(self.root, bg=C_BG)
+        mid = tk.Frame(self.root, bg=C_PAGE)
         mid.pack(fill="both", expand=True, padx=12, pady=(8, 0))
 
         cols = ("time", "user", "kind", "bar", "content")
@@ -191,10 +209,10 @@ class MonitorApp:
         self.tree.tag_configure("tweet", foreground=C_TWEET)
         self.tree.tag_configure("hist", foreground=C_HIST)
         # 日期分组表头样式
-        self.tree.tag_configure("datehdr", background="#dde4f0",
-                                foreground="#1f2a44", font=self.f_bold)
-        self.tree.tag_configure("datehdr_today", background="#c7d7f5",
-                                foreground="#11245c", font=self.f_bold)
+        self.tree.tag_configure("datehdr", background="#f0f1f3",
+                                foreground="#3c4147", font=self.f_bold)
+        self.tree.tag_configure("datehdr_today", background="#e4edfb",
+                                foreground="#0b57a4", font=self.f_bold)
 
         vsb = ttk.Scrollbar(mid, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
