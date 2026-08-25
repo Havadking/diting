@@ -10,6 +10,7 @@
 """
 import json
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -335,6 +336,97 @@ def parse_weibo(uid, cookie):
             "ctx_user": ctx_user,
             "ctx_text": ctx_text,
             "link": "https://weibo.com/%s/%s" % (uid, mb.get("mblogid") or mid),
+        })
+    return items
+
+
+# ---------- 帖子追加内容 ----------
+NEWS_LINK_RE = re.compile(r"eastmoney\.com/news,([^,]+),(\d+)\.html")
+
+
+def parse_news_link(link):
+    """从帖子链接反解出 (股吧代码, post_id)，查追加要单独请求帖子详情页，得先知道这两个。"""
+    m = NEWS_LINK_RE.search(link or "")
+    if not m:
+        return None, None
+    return m.group(1), m.group(2)
+
+
+def _extract_js_object(html, var_name):
+    """从形如 `var xxx={...};` 的内联脚本里把配平的大括号抠出来。
+    正则的非贪婪匹配搞不定嵌套 JSON（第一个内层 `}` 就会被误当成结尾），只能手动数括号。"""
+    marker = "var %s=" % var_name
+    start = html.find(marker)
+    if start == -1:
+        marker = "var %s =" % var_name
+        start = html.find(marker)
+        if start == -1:
+            return None
+    brace_start = html.find("{", start)
+    if brace_start == -1:
+        return None
+    depth = 0
+    in_str = False
+    str_ch = ""
+    escape = False
+    i = brace_start
+    while i < len(html):
+        ch = html[i]
+        if in_str:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == str_ch:
+                in_str = False
+        else:
+            if ch == '"' or ch == "'":
+                in_str = True
+                str_ch = ch
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return html[brace_start:i + 1]
+        i += 1
+    return None
+
+
+def parse_post_appends(code, post_id):
+    """抓帖子详情页，取作者「追加」的内容(post_add_list)。这部分内容不在
+    userdynamiclistv2 的列表接口里，只有帖子详情页的内嵌 JSON(post_article)才有。"""
+    link = "https://guba.eastmoney.com/news,%s,%s.html" % (code, post_id)
+    req = urllib.request.Request(link, headers={
+        "User-Agent": UA,
+        "Referer": "https://guba.eastmoney.com/",
+    })
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        html = resp.read().decode("utf-8", "ignore")
+    raw = _extract_js_object(html, "post_article")
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return []
+    items = []
+    for a in (data.get("post_add_list") or []):
+        add_id = str(a.get("add_id") or "")
+        if not add_id:
+            continue
+        text = re.sub(r"<[^>]+>", "", a.get("add_text") or "").strip()
+        items.append({
+            "key": "A" + add_id,
+            "kind": "追加",
+            "icon": "📌",
+            "time": (a.get("add_time") or "")[:19],
+            "title": "",
+            "content": text,
+            "bar": "",
+            "ctx_user": "",
+            "ctx_text": "",
+            "link": link,
         })
     return items
 

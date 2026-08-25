@@ -2,6 +2,7 @@
   "poll_interval_seconds": 60,
   "monitor_posts": true,
   "monitor_replies": true,
+  "append_check_interval_seconds": 300,
   "push": {
     "type": "serverchan",
     "key": "在这里填你的_Server酱_SendKey_或_PushPlus_token（桌面版可留空）"
@@ -12,7 +13,8 @@
   },
   "users": [
     { "uid": "1006087084850440", "name": "示例用户1（把uid换成你要监控的人）", "group": "游资大佬" },
-    { "uid": "9440093952207364", "name": "示例用户2（mute=true 只收进列表、不弹通知）", "mute": true }
+    { "uid": "9440093952207364", "name": "示例用户2（mute=true 只收进列表、不弹通知）", "mute": true },
+    { "uid": "5591057086910116", "name": "示例用户3（check_appends=true 会额外查这个人发帖后24小时内有没有追加内容）", "check_appends": true }
   ],
   "twitter_poll_interval_seconds": 180,
   "twitter_users": [

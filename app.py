@@ -10,7 +10,9 @@
 import os
 import json
 import queue
+import random
 import threading
+import time
 import traceback
 import webbrowser
 from collections import defaultdict
@@ -54,6 +56,7 @@ C_POST = "#0a8f5b"    # 发帖 绿
 C_REPLY = "#1d4ed8"   # 评论 蓝
 C_REPOST = "#c2620a"  # 转发 橙
 C_TWEET = "#7c3aed"   # 推文 紫
+C_APPEND = "#b3550f"  # 追加 棕
 C_HIST = "#566072"    # 历史 深灰（可清晰阅读）
 
 # 按「类型」区分的浅色行底色（与文字色同色系但很淡，用户自定义配色只管文字，不影响这层）
@@ -63,6 +66,7 @@ KIND_BG = {
     "转发": "#fdf1e2",
     "转推": "#fdf1e2",
     "推文": "#f3ecfb",
+    "追加": "#f6ece0",
 }
 
 # 自定义可选颜色：取自「中国传统色」，色相分明且白底上当文字清晰可读
@@ -104,6 +108,10 @@ class MonitorApp:
         self._dirty = False
         self._last_tw = 0.0       # 上次抓推特的时间戳
         self._last_wb = 0.0       # 上次抓微博的时间戳
+        self._last_append_check = 0.0  # 上次检查帖子追加的时间戳
+        # 帖子追加监视表：post_id -> {"uid","code","name","expires_at"}，只在后台线程读写，
+        # 不落盘——重启后自然清空，靠正常轮询重新发现"发布在24小时内"的帖子来重建，够用了。
+        self._append_watch = {}
 
         root.title("东方财富股吧监控 · 桌面版")
         root.geometry("1180x700")
@@ -236,6 +244,7 @@ class MonitorApp:
         self.tree.tag_configure("reply", foreground=C_REPLY)
         self.tree.tag_configure("repost", foreground=C_REPOST)
         self.tree.tag_configure("tweet", foreground=C_TWEET)
+        self.tree.tag_configure("append", foreground=C_APPEND)
         self.tree.tag_configure("hist", foreground=C_HIST)
         # 日期分组表头样式
         self.tree.tag_configure("datehdr", background="#f0f1f3",
@@ -308,6 +317,8 @@ class MonitorApp:
         self._seeded = set()      # 每次启动都重新按来源做首轮基线
         self._last_tw = 0.0
         self._last_wb = 0.0
+        self._last_append_check = 0.0
+        self._append_watch = {}
         self.stop_event = threading.Event()   # 给新线程一个全新的停止信号
         my_stop = self.stop_event
         self.btn_start.config(text="停止监控")
@@ -359,8 +370,6 @@ class MonitorApp:
             self.q.put(("new", name, new_items))
 
     def _run_loop(self, stop_event):
-        import random
-        import time
         state = monitor.load_state()
         while not stop_event.is_set():
             try:
@@ -384,6 +393,8 @@ class MonitorApp:
                     continue
                 if items:
                     self._emit(state, uid, name, items)
+                    if u.get("check_appends"):
+                        self._register_append_watch(uid, name, items)
                 stop_event.wait(random.uniform(2, 4))
 
             # —— 推特用户（单独的慢节奏，降低风控/封号风险）——
@@ -429,6 +440,13 @@ class MonitorApp:
                         self._emit(state, "wb:" + uid, name, items)
                     stop_event.wait(random.uniform(2, 4))
 
+            # —— 帖子追加检查（只查开了 check_appends 的用户；单独节奏）——
+            append_interval = int(cfg.get("append_check_interval_seconds", 300))
+            if self._append_watch and (self.first_cycle
+                                        or time.time() - self._last_append_check >= append_interval):
+                self._last_append_check = time.time()
+                self._check_append_watch(state, stop_event)
+
             monitor.save_state(state)
             self.first_cycle = False
             self.q.put(("status", "上次检查 %s · 运行中"
@@ -437,6 +455,46 @@ class MonitorApp:
             while waited < interval and not stop_event.is_set():
                 stop_event.wait(1)
                 waited += 1
+
+    # —— 帖子追加监视（只在后台线程读写 self._append_watch，不用加锁）——
+    def _register_append_watch(self, uid, name, items):
+        """把这一轮抓到的、发布在 24 小时内的帖子登记进监视表，之后定期查它有没有追加。"""
+        now = time.time()
+        for it in items:
+            if it["kind"] not in ("发帖", "转发"):
+                continue
+            code, post_id = monitor.parse_news_link(it["link"])
+            if not post_id or post_id in self._append_watch:
+                continue
+            try:
+                published = datetime.strptime(it["time"], "%Y-%m-%d %H:%M:%S").timestamp()
+            except Exception:
+                continue
+            if now - published > 86400:
+                continue
+            self._append_watch[post_id] = {
+                "uid": uid, "code": code, "name": name,
+                "expires_at": published + 86400,
+            }
+
+    def _check_append_watch(self, state, stop_event):
+        """查监视表里还没过期的帖子有没有新追加；查到就顺延 24 小时，查不到就让它自然过期。"""
+        now = time.time()
+        expired = [pid for pid, w in self._append_watch.items() if w["expires_at"] <= now]
+        for pid in expired:
+            del self._append_watch[pid]
+        for post_id, w in list(self._append_watch.items()):
+            if stop_event.is_set():
+                break
+            try:
+                items = monitor.parse_post_appends(w["code"], post_id)
+            except Exception as e:
+                self.q.put(("status", "查追加 %s 失败：%s" % (w["name"], str(e)[:80])))
+                continue
+            if items:
+                self._emit(state, "ap:" + post_id, w["name"], items)
+                w["expires_at"] = time.time() + 86400
+            stop_event.wait(random.uniform(2, 4))
 
     # ---------- 主线程：消费队列 ----------
     def _poll_queue(self):
@@ -570,7 +628,7 @@ class MonitorApp:
         if c:
             return self._color_tag(c)
         return {"发帖": "post", "评论": "reply", "转发": "repost",
-                "推文": "tweet", "转推": "tweet"}.get(kind, "")
+                "推文": "tweet", "转推": "tweet", "追加": "append"}.get(kind, "")
 
     @staticmethod
     def _resolve_bg(kind):
@@ -645,10 +703,11 @@ class MonitorApp:
             messagebox.showerror("错误", "读取配置失败：%s" % e)
             return
         win = tk.Toplevel(self.root)
-        win.title("用户设置：配色 / 静音")
+        win.title("用户设置：配色 / 静音 / 查追加")
         win.configure(bg=C_BG)
         win.geometry("1000x560")
-        tk.Label(win, text="点色块给用户上色（相同颜色＝同一组，「默认」按类型配色）；勾选「🔕静音」= 该用户只收进列表、不弹通知。",
+        tk.Label(win, text="点色块给用户上色（相同颜色＝同一组，「默认」按类型配色）；勾选「🔕静音」= 该用户只收进列表、不弹通知；"
+                           "勾选「🔗查追加」= 该用户股吧发帖发布后 24 小时内会额外检查作者有没有追加内容，有追加就顺延 24 小时继续查。",
                  font=self.f_base, bg=C_BG, fg="#5a6478",
                  wraplength=960, justify="left").pack(padx=16, pady=(14, 4), anchor="w")
         # 图例
@@ -676,6 +735,7 @@ class MonitorApp:
         previews = {}
         swatches = {}
         mutevars = {}
+        appendvars = {}
         for tagname, u in rows:
             name = u.get("name") or u.get("uid") or u.get("handle")
             cur = u.get("color") or (groups.get(u.get("group")) if u.get("group") else None)
@@ -714,6 +774,12 @@ class MonitorApp:
             tk.Checkbutton(r, text="🔕静音", variable=mv, font=self.f_base,
                            bg=C_BG, activebackground=C_BG,
                            anchor="w").pack(side="left", padx=(10, 0))
+            if tagname == "股吧":  # 「查追加」是股吧帖子特有的功能，推特/微博没有
+                av = tk.BooleanVar(value=bool(u.get("check_appends")))
+                appendvars[name] = av
+                tk.Checkbutton(r, text="🔗查追加", variable=av, font=self.f_base,
+                               bg=C_BG, activebackground=C_BG,
+                               anchor="w").pack(side="left", padx=(10, 0))
             self._hl(sw_list, cur)
 
         def save():
@@ -728,6 +794,10 @@ class MonitorApp:
                     u["mute"] = True
                 else:
                     u.pop("mute", None)
+                if appendvars.get(nm) and appendvars[nm].get():
+                    u["check_appends"] = True
+                else:
+                    u.pop("check_appends", None)
             try:
                 with open(monitor.CONFIG_PATH, "w", encoding="utf-8") as f:
                     json.dump(cfg, f, ensure_ascii=False, indent=2)
@@ -735,7 +805,7 @@ class MonitorApp:
                 messagebox.showerror("保存失败", str(e))
                 return
             self._rebuild()
-            self.set_status("已更新用户设置（配色 / 静音）。")
+            self.set_status("已更新用户设置（配色 / 静音 / 查追加）。")
             win.destroy()
 
         ttk.Button(win, text="保存", style="Accent.TButton",

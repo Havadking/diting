@@ -55,10 +55,10 @@ key, kind, icon, time, title, content, bar, ctx_user, ctx_text, link
 
 两个**载荷性约定**，改动时容易踩：
 
-1. **`kind` 是中文字符串字面量**，且被当作 dict 键在两个文件里跨文件使用（`app.py` 的 `KIND_BG`、`_resolve_fg`，`monitor.py` 的 `build_message`）。取值：`发帖` / `转发` / `评论`（股吧、微博）、`推文` / `转推`（推特）。新增来源必须复用这些字符串，否则配色和通知文案会静默失配。
+1. **`kind` 是中文字符串字面量**，且被当作 dict 键在两个文件里跨文件使用（`app.py` 的 `KIND_BG`、`_resolve_fg`，`monitor.py` 的 `build_message`）。取值：`发帖` / `转发` / `评论`（股吧、微博）、`推文` / `转推`（推特）、`追加`（`monitor.parse_post_appends()`，见下方「帖子追加检查」）。新增来源必须复用这些字符串，否则配色和通知文案会静默失配。
 2. **`time` 必须是 `YYYY-MM-DD HH:MM:SS` 格式**。`app.py` 直接对字符串做切片（`it["time"][:10]` 取日期分组、`it["time"][11:16]` 取显示时间）并按字符串排序，格式不对会导致分组和排序错乱。推特走 `_norm_time()`、微博走 `_parse_weibo_time()` 做归一化。
 
-`key` 带来源前缀去重：`P`(帖) / `R`(回复) / `T`(推文) / `W`(微博)。
+`key` 带来源前缀去重：`P`(帖) / `R`(回复) / `T`(推文) / `W`(微博) / `A`(帖子追加)。
 
 ### 去重与「首轮基线」
 
@@ -73,6 +73,15 @@ key, kind, icon, time, title, content, bar, ctx_user, ctx_text, link
 `state.json` 只存去重用的 `key` 列表，不存消息内容——真正的消息内容存在 `monitor.py` 的 `messages.db`（`get_db()`/`save_message()`/`load_recent_messages()`），表结构就是 `app.py` `self.items` 那种已经处理好的展示字段（`content` 已经拼好「评论于/转发自」前缀），不是 `monitor.py` 解析函数的原始字段，所以直接读出来就能塞回列表，不用重新处理。
 
 只在 `app.py` 主线程读写（启动时 `_load_history_from_db()` 读，`_add_item()` 里写），没开 `check_same_thread=False`，**不要**从 `_run_loop` 那个后台线程直接碰这个连接。`monitor.py` 的独立命令行版目前不写这个库。
+
+### 帖子追加检查
+
+东方财富股吧允许作者在原帖发布后继续「追加」内容（前端显示成"作者更新以下内容"），但这部分文字**不在** `userdynamiclistv2` 列表接口的 `post_content` 字段里，只存在于帖子详情页 `guba.eastmoney.com/news,{code},{post_id}.html` 内嵌的 `var post_article={...};` JSON 里的 `post_add_list` 数组。`monitor.parse_post_appends(code, post_id)` 专门请求这个详情页，用 `_extract_js_object()` 手动配平大括号把这段 JSON 抠出来（正则的非贪婪匹配处理不了嵌套 JSON，见函数内注释）。`monitor.parse_news_link(link)` 从统一 item 的 `link` 字段反解出 `(code, post_id)`，避免给统一 item 字典再加新字段。
+
+只对用户在「用户设置」里勾了 `check_appends: true` 的股吧用户生效（推特/微博没有这个概念）。监视逻辑全在 `app.py` 后台线程 `_run_loop` 里，**故意不落盘**：
+
+- `self._append_watch`：`{post_id: {"uid","code","name","expires_at"}}`，只有后台线程会碰它，不用加锁。`_register_append_watch()` 把发布在 24 小时内的帖子登记进去；`_check_append_watch()` 定期（`append_check_interval_seconds`，默认 300 秒）挨个请求详情页，查到追加就用 `_emit()` 走跟其它来源一样的去重/首轮基线/通知流程（skey 是 `"ap:" + post_id`），并把 `expires_at` 顺延 24 小时；查不到就让它自然过期、下一轮被清掉。
+- 重启会清空这张表——不是 bug，是有意简化：下次轮询重新拉到该用户的帖子时，只要还在"发布 24 小时内"就会被重新登记，不需要额外持久化这份运行时调度状态。真正的追加内容一旦查到，会像其它动态一样存进 `messages.db`，不会因为重启丢失。
 
 ### 线程模型
 
@@ -111,6 +120,7 @@ commit message 用 conventional commits 格式，说明"为什么"而非"改了�
 
 - 股吧发帖/转发：`i.eastmoney.com/api/guba/userdynamiclistv2`（`type=1`）。**必须用这个而非 `fullarticlelist`**——后者只返回财富号文章，会漏掉股吧短帖。
 - 股吧评论：`i.eastmoney.com/api/guba/myreply`
+- 股吧帖子追加：`guba.eastmoney.com/news,{code},{post_id}.html`（详情页，抠内嵌 `post_article` JSON，见上方「帖子追加检查」）
 - 推特：外部 CLI `twitter user-posts @handle -n 40 --json`（`pipx install twitter-cli`），靠环境变量 `TWITTER_AUTH_TOKEN` / `TWITTER_CT0` 认证。子进程必须带 `_no_window_kwargs()` 隐藏控制台黑框。
 - 微博：`weibo.com/ajax/statuses/mymblog`，Cookie 从 `config.json` 的 `weibo_cookie` 读（至少含 `SUB`）。
 
