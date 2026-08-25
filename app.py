@@ -375,6 +375,45 @@ class MonitorApp:
         self.tree.selection_set(row)
         self._show_full_content(it, event.x_root, event.y_root)
 
+    @staticmethod
+    def _monitor_work_area(x, y):
+        """Windows 下拿 (x,y) 所在物理显示器的可用区域，用来夹取弹窗位置——
+        tkinter 的 winfo_screenwidth/height 只认主屏尺寸，多屏时如果直接拿它当
+        边界夹坐标，副屏（尤其是坐标比主屏更靠右/靠下，或者干脆是负坐标摆在
+        主屏左侧/上方的情况）点击一律会被夹回主屏，表现就是"弹窗跑去主屏角落"。
+        用 MonitorFromPoint 找到鼠标点所在的那块屏幕，再用 GetMonitorInfo 拿它
+        真实的坐标范围（可能是负数），才能正确地"只夹在同一块屏幕内"。"""
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class RECT(ctypes.Structure):
+                _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                            ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+            class MONITORINFO(ctypes.Structure):
+                _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", RECT),
+                            ("rcWork", RECT), ("dwFlags", wintypes.DWORD)]
+
+            user32 = ctypes.windll.user32
+            # HMONITOR 在 64 位上是指针宽度，不显式声明返回类型 ctypes 会按 c_int
+            # 截断，句柄值就错了，后面 GetMonitorInfoW 会传进去一个野句柄。
+            user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+            user32.MonitorFromPoint.restype = wintypes.HANDLE
+            user32.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(MONITORINFO)]
+            user32.GetMonitorInfoW.restype = wintypes.BOOL
+            MONITOR_DEFAULTTONEAREST = 2
+            pt = wintypes.POINT(int(x), int(y))
+            hmon = user32.MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST)
+            mi = MONITORINFO()
+            mi.cbSize = ctypes.sizeof(MONITORINFO)
+            if user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+                r = mi.rcWork
+                return r.left, r.top, r.right, r.bottom
+        except Exception:
+            pass
+        return None
+
     def _show_full_content(self, it, x, y):
         win = tk.Toplevel(self.root)
         win.title("%s · %s" % (it["name"], it["kind"]))
@@ -417,8 +456,15 @@ class MonitorApp:
         # 窗口管理器常常会把它挪到别的地方，而不是停在鼠标点击的位置。
         win.update_idletasks()
         w, h = win.winfo_reqwidth(), win.winfo_reqheight()
-        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
-        win.geometry("+%d+%d" % (max(0, min(x, sw - w)), max(0, min(y, sh - h))))
+        area = self._monitor_work_area(x, y)
+        if area:
+            left, top, right, bottom = area
+        else:  # 拿不到就退回单屏假设，好歹不崩
+            left, top = 0, 0
+            right, bottom = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        px = max(left, min(x, right - w))
+        py = max(top, min(y, bottom - h))
+        win.geometry("+%d+%d" % (px, py))
 
     # ---------- 后台线程 ----------
     def _emit(self, state, skey, name, items):
