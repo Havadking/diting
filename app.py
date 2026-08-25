@@ -103,6 +103,9 @@ class MonitorApp:
         self.row_item = {}        # iid -> 完整 item dict（右键查看全文用，每次重建）
         self.header_date = {}     # 日期表头 iid -> 日期
         self.user_collapsed = {}  # 日期 -> 是否折叠（用户手动覆盖）
+        self._pending_render = [] # 已入 self.items 但还没渲染进 Treeview 的新条目
+        self._row_seq = 0         # 行 iid 计数器，全量重建和快速追加共用，避免 iid 撞车
+        self._date_row_count = {} # 日期 -> 该日期总条数（表头「(N)」用，快速追加时增量更新）
         self._color_tags = set()  # 已创建的颜色 tag
         self._color_map = {}      # 用户名 -> 颜色
         self._muted = set()       # 被静音(只收不提示)的用户名
@@ -354,6 +357,8 @@ class MonitorApp:
         self.row_link.clear()
         self.row_item.clear()
         self.header_date.clear()
+        self._pending_render.clear()
+        self._date_row_count.clear()
 
     def open_selected(self, _e=None):
         sel = self.tree.selection()
@@ -374,8 +379,6 @@ class MonitorApp:
         win = tk.Toplevel(self.root)
         win.title("%s · %s" % (it["name"], it["kind"]))
         win.configure(bg=C_BG)
-        win.geometry("+%d+%d" % (min(x, self.root.winfo_screenwidth() - 620),
-                                  min(y, self.root.winfo_screenheight() - 420)))
 
         head = "%s%s · %s · %s" % (it.get("icon") or "", it["kind"], it["name"], it["time"])
         if it.get("bar") and it["bar"] != "—":
@@ -408,6 +411,14 @@ class MonitorApp:
                    command=lambda: webbrowser.open(it["link"])).pack(side="left", padx=(8, 0))
         ttk.Button(btns, text="关闭", style="Tool.TButton",
                    command=win.destroy).pack(side="right")
+
+        # 内容都装进去之后窗口才有真实尺寸，这时候再定位才能准——创建 Toplevel 后
+        # 立刻 geometry("+x+y") 是错的：那会儿窗口还没内容，尺寸没定，等 pack 完
+        # 窗口管理器常常会把它挪到别的地方，而不是停在鼠标点击的位置。
+        win.update_idletasks()
+        w, h = win.winfo_reqwidth(), win.winfo_reqheight()
+        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        win.geometry("+%d+%d" % (max(0, min(x, sw - w)), max(0, min(y, sh - h))))
 
     # ---------- 后台线程 ----------
     def _emit(self, state, skey, name, items):
@@ -587,7 +598,12 @@ class MonitorApp:
             pass
         if self._dirty:
             at_bottom = self._at_bottom()
-            self._rebuild()
+            pending = self._pending_render
+            self._pending_render = []
+            if self._can_fast_append(pending):
+                self._append_pending_rows(pending)
+            else:
+                self._rebuild()
             self._dirty = False
             if scroll_needed and at_bottom:
                 self.tree.yview_moveto(1.0)
@@ -651,6 +667,7 @@ class MonitorApp:
             "content": content, "link": it["link"],
         }
         self.items.append(entry)
+        self._pending_render.append(entry)
         if self._db:
             try:
                 monitor.save_message(self._db, entry)
@@ -705,6 +722,7 @@ class MonitorApp:
     # —— 重建列表（扁平 + 日期表头 + 自定义折叠）——
     def _rebuild(self):
         self._refresh_config_maps()
+        self._pending_render = []  # 全量重建会把 self.items 全部渲染一遍，不留待追加的尾巴
         if len(self.items) > MAX_ROWS:
             self.items.sort(key=lambda x: x["time"])
             drop = self.items[:len(self.items) - MAX_ROWS]
@@ -716,15 +734,17 @@ class MonitorApp:
         self.row_link.clear()
         self.row_item.clear()
         self.header_date.clear()
+        self._date_row_count.clear()
+        self._row_seq = 0
 
         groups = defaultdict(list)
         for it in self.items:
             groups[(it["time"][:10] or "未知日期")].append(it)
 
         today = self._today()
-        seq = 0
         for date in sorted(groups):
             rows = sorted(groups[date], key=lambda x: x["time"])
+            self._date_row_count[date] = len(rows)
             collapsed = self.user_collapsed.get(date, date != today)
             arrow = "▶" if collapsed else "▼"
             mark = "今天 " if date == today else ""
@@ -737,8 +757,8 @@ class MonitorApp:
             if collapsed:
                 continue
             for it in rows:
-                seq += 1
-                iid = "r%d" % seq
+                self._row_seq += 1
+                iid = "r%d" % self._row_seq
                 kind_txt = ("%s %s" % (it.get("icon") or "", it["kind"])).strip()
                 self.tree.insert("", "end", iid=iid,
                                  values=(it["time"][11:16], it["name"],
@@ -749,6 +769,43 @@ class MonitorApp:
                 self.row_item[iid] = it
         if at_bottom:
             self.tree.yview_moveto(1.0)
+
+    def _can_fast_append(self, pending):
+        """能不能走快速追加：新条目全属于「今天」、今天的表头已经在树里、没被折叠、
+        也不需要触发 MAX_ROWS 裁剪。不满足就老老实实走全量重建，图个稳。"""
+        if not pending:
+            return False
+        if len(self.items) > MAX_ROWS:
+            return False
+        today = self._today()
+        hid = "h_" + today.replace("-", "")
+        if not self.tree.exists(hid):
+            return False
+        if self.user_collapsed.get(today, False):
+            return False
+        return all(it["time"][:10] == today for it in pending)
+
+    def _append_pending_rows(self, pending):
+        """常见情况（有新动态但不用挪动/删除已有行）走这条快路：只插入新行、更新
+        当天表头的计数，不清空重建整棵 1000 行的树——那样又慢，还会把用户正在看
+        的滚动位置弹飞（旧实现每来一条新消息就全量重建一次，这是之前"滚动卡"的
+        主因：树被清空重插时，没在最底部的滚动位置没法保持，等于每次都给拽回去）。"""
+        today = self._today()
+        hid = "h_" + today.replace("-", "")
+        self._date_row_count[today] = self._date_row_count.get(today, 0) + len(pending)
+        self.tree.item(hid, values=("▼ %s" % today,
+                                    "今天 (%d)" % self._date_row_count[today], "", "", ""))
+        for it in sorted(pending, key=lambda x: x["time"]):
+            self._row_seq += 1
+            iid = "r%d" % self._row_seq
+            kind_txt = ("%s %s" % (it.get("icon") or "", it["kind"])).strip()
+            self.tree.insert("", "end", iid=iid,
+                             values=(it["time"][11:16], it["name"],
+                                     kind_txt, it["bar"], it["content"]),
+                             tags=(self._resolve_bg(it["kind"]),
+                                   self._resolve_fg(it["name"], it["kind"])))
+            self.row_link[iid] = it["link"]
+            self.row_item[iid] = it
 
     def _on_header_click(self, event):
         row = self.tree.identify_row(event.y)
