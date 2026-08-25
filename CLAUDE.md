@@ -83,6 +83,8 @@ key, kind, icon, time, title, content, bar, ctx_user, ctx_text, link
 - `self._append_watch`：`{post_id: {"uid","code","name","expires_at"}}`，只有后台线程会碰它，不用加锁。`_register_append_watch()` 把发布在 24 小时内的帖子登记进去；`_check_append_watch()` 定期（`append_check_interval_seconds`，默认 300 秒）挨个请求详情页，查到追加就用 `_emit()` 走跟其它来源一样的去重/首轮基线/通知流程（skey 是 `"ap:" + post_id`），并把 `expires_at` 顺延 24 小时；查不到就让它自然过期、下一轮被清掉。
 - 重启会清空这张表——不是 bug，是有意简化：下次轮询重新拉到该用户的帖子时，只要还在"发布 24 小时内"就会被重新登记，不需要额外持久化这份运行时调度状态。真正的追加内容一旦查到，会像其它动态一样存进 `messages.db`，不会因为重启丢失。
 
+**详情页接口比列表接口(`userdynamiclistv2`)更容易触发东财反爬验证**（实测踩过：连续调过几次详情页后，同一个 IP 请求任何帖子详情页都会被拦成验证页而不是真实内容）。`parse_post_appends()` 识别出验证页特征（`fd_guba_validate`/`em_capt.js`）就主动抛异常，不会把验证页误当成"没有追加"。`app.py` 的 `_check_append_watch()` 配了失败退避：`self._append_fail_streak` 记连续失败次数，`_append_backoff_interval()` 让下次检查间隔按 `base * 2^streak` 翻倍拉长（封顶 2 小时），一旦有一轮成功就清零回到 `append_check_interval_seconds` 配的正常间隔。退避只作用于"查追加"这一个独立节奏，不影响股吧/推特/微博的正常轮询。
+
 ### 线程模型
 
 `app.py` 单后台线程 `_run_loop()` 轮询，通过 `queue.Queue` 把 `("status"|"history"|"new", ...)` 事件传给主线程，主线程 `_poll_queue()` 每 400ms 消费一次并重建列表。**所有 tkinter 调用必须在主线程**。

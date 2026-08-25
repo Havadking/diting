@@ -109,6 +109,7 @@ class MonitorApp:
         self._last_tw = 0.0       # 上次抓推特的时间戳
         self._last_wb = 0.0       # 上次抓微博的时间戳
         self._last_append_check = 0.0  # 上次检查帖子追加的时间戳
+        self._append_fail_streak = 0   # 连续失败次数，用来算退避间隔
         # 帖子追加监视表：post_id -> {"uid","code","name","expires_at"}，只在后台线程读写，
         # 不落盘——重启后自然清空，靠正常轮询重新发现"发布在24小时内"的帖子来重建，够用了。
         self._append_watch = {}
@@ -318,6 +319,7 @@ class MonitorApp:
         self._last_tw = 0.0
         self._last_wb = 0.0
         self._last_append_check = 0.0
+        self._append_fail_streak = 0
         self._append_watch = {}
         self.stop_event = threading.Event()   # 给新线程一个全新的停止信号
         my_stop = self.stop_event
@@ -440,8 +442,9 @@ class MonitorApp:
                         self._emit(state, "wb:" + uid, name, items)
                     stop_event.wait(random.uniform(2, 4))
 
-            # —— 帖子追加检查（只查开了 check_appends 的用户；单独节奏）——
-            append_interval = int(cfg.get("append_check_interval_seconds", 300))
+            # —— 帖子追加检查（只查开了 check_appends 的用户；单独节奏，失败会自动退避）——
+            append_base = int(cfg.get("append_check_interval_seconds", 300))
+            append_interval = self._append_backoff_interval(append_base)
             if self._append_watch and (self.first_cycle
                                         or time.time() - self._last_append_check >= append_interval):
                 self._last_append_check = time.time()
@@ -477,24 +480,37 @@ class MonitorApp:
                 "expires_at": published + 86400,
             }
 
+    def _append_backoff_interval(self, base):
+        """连续失败越多次，下次检查间隔翻倍拉长（封顶 2 小时），避免在反爬验证生效期间
+        还一直按原节奏反复触发；只要有一轮成功就重置回正常间隔。"""
+        return min(base * (2 ** self._append_fail_streak), 7200)
+
     def _check_append_watch(self, state, stop_event):
         """查监视表里还没过期的帖子有没有新追加；查到就顺延 24 小时，查不到就让它自然过期。"""
         now = time.time()
         expired = [pid for pid, w in self._append_watch.items() if w["expires_at"] <= now]
         for pid in expired:
             del self._append_watch[pid]
+        had_failure = False
         for post_id, w in list(self._append_watch.items()):
             if stop_event.is_set():
                 break
             try:
                 items = monitor.parse_post_appends(w["code"], post_id)
             except Exception as e:
+                had_failure = True
                 self.q.put(("status", "查追加 %s 失败：%s" % (w["name"], str(e)[:80])))
                 continue
             if items:
                 self._emit(state, "ap:" + post_id, w["name"], items)
                 w["expires_at"] = time.time() + 86400
             stop_event.wait(random.uniform(2, 4))
+        if had_failure:
+            self._append_fail_streak = min(self._append_fail_streak + 1, 6)
+            self.q.put(("status", "查追加连续失败，已自动放慢检查频率（退避第 %d 级）"
+                        % self._append_fail_streak))
+        elif self._append_fail_streak:
+            self._append_fail_streak = 0
 
     # ---------- 主线程：消费队列 ----------
     def _poll_queue(self):

@@ -403,6 +403,8 @@ def parse_post_appends(code, post_id):
     })
     with urllib.request.urlopen(req, timeout=20) as resp:
         html = resp.read().decode("utf-8", "ignore")
+    if "fd_guba_validate" in html or "em_capt.js" in html:
+        raise RuntimeError("触发东财反爬验证，本次跳过")
     raw = _extract_js_object(html, "post_article")
     if not raw:
         return []
