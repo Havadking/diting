@@ -100,6 +100,7 @@ class MonitorApp:
         self.items = []           # 数据模型：所有动态(dict)
         self.item_keys = set()    # 去重
         self.row_link = {}        # iid -> 链接（每次重建）
+        self.row_item = {}        # iid -> 完整 item dict（右键查看全文用，每次重建）
         self.header_date = {}     # 日期表头 iid -> 日期
         self.user_collapsed = {}  # 日期 -> 是否折叠（用户手动覆盖）
         self._color_tags = set()  # 已创建的颜色 tag
@@ -234,7 +235,7 @@ class MonitorApp:
         self.tree = ttk.Treeview(mid, columns=cols, show="headings", selectmode="browse")
         layout = [("time", "时间 / 日期", 138, "w"), ("user", "用户", 130, "w"),
                   ("kind", "类型", 84, "w"), ("bar", "来源", 140, "w"),
-                  ("content", "内容（双击打开原文）", 520, "w")]
+                  ("content", "内容（双击打开原文 / 右键看全文）", 520, "w")]
         for c, txt, w, anc in layout:
             self.tree.heading(c, text=txt, anchor="w")
             self.tree.column(c, width=w, anchor=anc, stretch=(c == "content"))
@@ -259,6 +260,7 @@ class MonitorApp:
         vsb.pack(side="right", fill="y")
         self.tree.bind("<Double-1>", self.open_selected)
         self.tree.bind("<Button-1>", self._on_header_click, add="+")
+        self.tree.bind("<Button-3>", self._on_right_click)
 
         # 状态栏
         bar = tk.Frame(self.root, bg=C_TOOLBAR)
@@ -350,12 +352,62 @@ class MonitorApp:
         self.items.clear()
         self.item_keys.clear()
         self.row_link.clear()
+        self.row_item.clear()
         self.header_date.clear()
 
     def open_selected(self, _e=None):
         sel = self.tree.selection()
         if sel and self.row_link.get(sel[0]):
             webbrowser.open(self.row_link[sel[0]])
+
+    def _on_right_click(self, event):
+        """右键一行：弹小窗看全文。Treeview 列宽有限，长内容会被视觉裁掉，
+        底层数据其实是完整的，不用重新请求，直接从 self.row_item 拿。"""
+        row = self.tree.identify_row(event.y)
+        it = self.row_item.get(row)
+        if not it:
+            return
+        self.tree.selection_set(row)
+        self._show_full_content(it, event.x_root, event.y_root)
+
+    def _show_full_content(self, it, x, y):
+        win = tk.Toplevel(self.root)
+        win.title("%s · %s" % (it["name"], it["kind"]))
+        win.configure(bg=C_BG)
+        win.geometry("+%d+%d" % (min(x, self.root.winfo_screenwidth() - 620),
+                                  min(y, self.root.winfo_screenheight() - 420)))
+
+        head = "%s%s · %s · %s" % (it.get("icon") or "", it["kind"], it["name"], it["time"])
+        if it.get("bar") and it["bar"] != "—":
+            head += " · " + it["bar"]
+        tk.Label(win, text=head, font=self.f_bold, bg=C_BG, fg="#1c1c1c",
+                 anchor="w", wraplength=580, justify="left").pack(fill="x", padx=16, pady=(14, 6))
+
+        body = tk.Frame(win, bg=C_BG)
+        body.pack(fill="both", expand=True, padx=16)
+        txt = tk.Text(body, wrap="word", font=self.f_base, bg=C_BG, fg="#1c1c1c",
+                      relief="flat", height=12, width=60, padx=4, pady=4)
+        vsb = ttk.Scrollbar(body, orient="vertical", command=txt.yview)
+        txt.configure(yscrollcommand=vsb.set)
+        txt.insert("1.0", it["content"] or "(无正文)")
+        txt.configure(state="disabled")
+        txt.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="right", fill="y")
+
+        btns = tk.Frame(win, bg=C_BG)
+        btns.pack(fill="x", padx=16, pady=12)
+
+        def _copy():
+            self.root.clipboard_clear()
+            self.root.clipboard_append(it["content"] or "")
+            self.set_status("已复制内容到剪贴板。")
+
+        ttk.Button(btns, text="复制内容", style="Tool.TButton",
+                   command=_copy).pack(side="left")
+        ttk.Button(btns, text="打开原文", style="Tool.TButton",
+                   command=lambda: webbrowser.open(it["link"])).pack(side="left", padx=(8, 0))
+        ttk.Button(btns, text="关闭", style="Tool.TButton",
+                   command=win.destroy).pack(side="right")
 
     # ---------- 后台线程 ----------
     def _emit(self, state, skey, name, items):
@@ -662,6 +714,7 @@ class MonitorApp:
         at_bottom = self._at_bottom()
         self.tree.delete(*self.tree.get_children())
         self.row_link.clear()
+        self.row_item.clear()
         self.header_date.clear()
 
         groups = defaultdict(list)
@@ -693,6 +746,7 @@ class MonitorApp:
                                  tags=(self._resolve_bg(it["kind"]),
                                        self._resolve_fg(it["name"], it["kind"])))
                 self.row_link[iid] = it["link"]
+                self.row_item[iid] = it
         if at_bottom:
             self.tree.yview_moveto(1.0)
 
