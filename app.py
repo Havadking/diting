@@ -35,7 +35,7 @@ try:
 except Exception:
     HAS_THEME = False
 
-APP_ID = "东方财富股吧监控"
+APP_ID = "谛听"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ERR_LOG = os.path.join(BASE_DIR, "gui_error.log")
 MAX_ROWS = 1000
@@ -115,7 +115,7 @@ class MonitorApp:
         # 不落盘——重启后自然清空，靠正常轮询重新发现"发布在24小时内"的帖子来重建，够用了。
         self._append_watch = {}
 
-        root.title("东方财富股吧监控 · 桌面版")
+        root.title("谛听 · 东方财富股吧监控")
         root.geometry("1180x700")
         root.configure(bg=C_PAGE)
         self._setup_style()
@@ -206,7 +206,7 @@ class MonitorApp:
         inner = tk.Frame(top, bg=C_TOOLBAR)
         inner.pack(fill="x", padx=12, pady=10)
 
-        tk.Label(inner, text="股吧监控", font=self.f_title,
+        tk.Label(inner, text="谛听", font=self.f_title,
                  bg=C_TOOLBAR, fg="#1c1c1c").pack(side="left", padx=(0, 14))
 
         self.btn_start = ttk.Button(inner, text="开始监控", style="Accent.TButton",
