@@ -211,17 +211,158 @@ App
 - 紧凑单行模式
 - 推特 / 微博来源恢复时的 UI（`ENABLE_TWITTER` / `ENABLE_WEIBO` 开关的语义要搬到 `core.py`，`/api/users` 保存逻辑同样只遍历已启用的来源）
 
-## 9. 实施顺序
+## 9. 实施路线
 
-每步独立可提交、可运行，走 conventional commits。
+整个改造**分 7 个阶段、预计 7～9 次独立会话**完成，不是一次做完。每个阶段的产物都能独立提交、独立运行，
+做完一个阶段就 commit + push，下一次会话从「进度表」里没打勾的第一项接着做。
+每个阶段都写明了**完成标准**——达不到就不算完，不要为了赶进度把验证跳过。
 
-1. **`core.py`**：把 `MonitorApp` 的非 UI 部分搬过去，`app.py` 改成 import `core` 跑（保证旧版还能用，作为回归验证）。
-2. **`server.py` 最小版**：`/api/snapshot` + `/api/events` + 静态文件，用 `curl` 验证。
-3. **`web/` 骨架**：拉 vendor 文件，index + Feed 只读渲染，接 snapshot + SSE。
-4. **交互**：筛选、折叠、展开、新动态角标、跟随滚动。
-5. **设置抽屉** + `/api/users` + `/api/control`。
-6. **收尾**：深色模式、竖屏适配、加载更早、断线横幅、退出、`run_gui.bat`、README、CLAUDE.md 更新。
-7. 稳定运行一段时间后删 `app.py`。
+### 进度表
+
+做完一个阶段就在这里打勾、填提交号。这是跨会话的唯一进度来源，别只记在脑子里。
+
+| 阶段 | 内容 | 状态 | 提交 |
+|---|---|---|---|
+| 0 | 设计文档 + 视觉稿 | ✅ | `003002f` |
+| 1 | `core.py`：抽离无 UI 的 `MonitorCore`，`app.py` 改为消费它 | ⬜ | |
+| 2 | `server.py` 最小版：静态文件 + `/api/snapshot` + `/api/events` + `--mock` | ⬜ | |
+| 3 | `web/` 骨架：vendor 落地、Feed 只读渲染、接 snapshot + SSE | ⬜ | |
+| 4 | 交互：筛选、日期折叠、卡片展开、新动态角标、跟随滚动、标题未读数 | ⬜ | |
+| 5 | 设置抽屉 + `/api/users` + `/api/control`（启停/清空/测试通知/退出） | ⬜ | |
+| 6 | 收尾：深色模式、竖屏适配、加载更早、断线横幅、启动脚本、文档 | ⬜ | |
+| 7 | 稳定运行 ≥ 1 周后删 `app.py` | ⬜ | |
+
+### 阶段 1 — `core.py`（预计 1 次会话，改动最大也最危险）
+
+**目标**：`MonitorApp` 里所有不碰 tkinter 的东西搬进 `core.MonitorCore`，`app.py` 变成一层薄 UI 壳。这一步**不加任何新功能**，纯重构。
+
+要搬的（按 `app.py` 现有方法名）：
+- 状态：`items` / `item_keys` / `_seeded` / `_append_watch` / `_append_fail_streak` / `_stop_event` / `_thread` / 用户配置映射（`_refresh_config_maps` 产出的 name→color/mute/check_appends 字典）
+- 线程：`start()` / `stop()`（**保留 join 旧线程 + 新建 `threading.Event` 的顺序**，见 commit be583e0）、`_run_loop()`、`_emit()`、`_register_append_watch()` / `_append_backoff_interval()` / `_check_append_watch()`
+- 数据：`_add_item()`（含 `save_message()` 写库）、`_load_history_from_db()`、`_handle_new()` 里的静音判断 + `MERGE_LIMIT` 合并 + 弹 toast
+- 常量：`KIND_BG` / `PALETTE` / `MERGE_LIMIT` / `ENABLE_TWITTER` / `ENABLE_WEIBO` 搬到 `core.py`，`app.py` 从 `core` import
+
+不搬的（留在 `app.py`）：`_setup_style` / `_build_ui` / `_rebuild` / `_can_fast_append` / `_append_pending_rows` / `_show_full_content` / `_monitor_work_area` / `open_colors` 的窗口部分 / `_poll_queue`。
+
+`queue.Queue` → 主线程的单播改成 `_broadcast(type, payload)` 多播（§4 的事件表）。`app.py` 的 `_poll_queue()` 改成 `subscribe()` 一个队列消费，行为和现在一样。
+
+**SQLite 归属改动**（§4「线程与 SQLite」）：写库从主线程挪到后台线程，`_run_loop` 开头开连接、`finally` 里关。`app.py` 不再持有 `self.db`。
+
+**完成标准**：
+- [ ] `py_compile` 两个文件都过
+- [ ] 用 CLAUDE.md 里的离线 monkeypatch 方法启动 `app.py`，灌假数据截图，和改动前一样
+- [ ] 真实 `config.json` 跑 `python app.py` 10 分钟：首轮不弹通知、状态栏正常刷新、`messages.db` 有新写入、关窗口进程能退出（后台线程 join 成功）
+- [ ] `core.py` 顶部 `import` 里**没有** `tkinter`
+- [ ] `.gitignore` 加 `!/core.py`
+
+提交：`refactor: 抽离 MonitorCore，app.py 只剩 tkinter 壳`
+
+### 阶段 2 — `server.py` 最小版（预计 1 次会话）
+
+**目标**：不写一行前端，纯用 `curl` 就能验证后端。
+
+- `ThreadingHTTPServer` + `BaseHTTPRequestHandler`，绑 `127.0.0.1`，端口 17777 被占自动 +1（`OSError` 重试，最多 20 次）
+- `GET /` 和 `GET /assets/<path>`：从 `web/` 读文件，`os.path.realpath` 校验不能逃出 `web/`；MIME 表手写几项（html/css/js/woff2/svg/png）即可
+- `GET /api/snapshot`：按 §5 的结构返回，`items` 加 `lock` 读内存
+- `GET /api/events`：SSE。`subscribe()` 拿队列，循环 `q.get(timeout=25)`，超时发 `: ping\n\n`，客户端断开（`BrokenPipeError` / `ConnectionResetError`）时 `unsubscribe()`。连上先发一条 `status`
+- `--mock`：`MonitorCore` 加一个 `mock=True` 构造参数——不读 `config.json`、不起抓取线程，`items` 用内置示例数据（从 `web-mock.html` 里那份 JSON 抄出来放 `core.py` 底部或 `mock_data.py`），另起一个线程每 10 秒随机 `_broadcast("new", [...])`
+- `--no-browser`：调试用，不自动 `webbrowser.open`
+- 主入口：启动时 `load_recent_messages()` 填 `items` → `core.start()` → 起 HTTP → 开浏览器 → `serve_forever()`；`Ctrl-C` 时 `core.stop()` 再退出
+
+**完成标准**：
+- [ ] `python server.py --mock --no-browser` 起来后 `curl 127.0.0.1:17777/api/snapshot` 返回合法 JSON，`items` 非空
+- [ ] `curl -N 127.0.0.1:17777/api/events` 能看到首条 `event: status`、之后每 10 秒一条 `event: new`、期间有 `: ping`
+- [ ] 开两个 `curl -N`，`Ctrl-C` 掉一个，另一个仍在收事件，且 `core._subs` 长度回落（打日志确认）
+- [ ] `curl 127.0.0.1:17777/assets/../core.py` 返回 404 而不是源码
+- [ ] 手动占住 17777 端口再启动，能落到 17778
+- [ ] `.gitignore` 加 `!/server.py`（`mock_data.py` 若单独建也要加）
+
+提交：`feat: 本地 HTTP 服务 + SSE 事件流（--mock 离线模式）`
+
+### 阶段 3 — `web/` 骨架（预计 1 次会话）
+
+**目标**：浏览器打开能看到和视觉稿一致的只读列表，数据来自真实 snapshot + SSE。
+
+- vendor 文件落地：`react.production.min.js` / `react-dom.production.min.js`（18.3.1 UMD）、`htm.min.js`（3.1.1）。子集字体 `diting-serif.woff2` 用 `pyftsubset`（`pip install fonttools`）从 Noto Serif SC 抠「谛听」两字；抠不出来就先不放，CSS 回退 SimSun，**不要阻塞这个阶段**
+- `index.html`：三个 `<script>` 标签 + `<div id="root">` + `app.js`
+- `app.css`：把 `web-mock.html` 的 `:root` token 和卡片样式整体搬过来，去掉 Babel 相关
+- `app.js`：JSX → htm 改写。组件先只做 `App` / `TopBar`（静态） / `Feed` / `DateGroup` / `Card`；`useReducer` store 实现 `replace` / `append`（按 `key` 去重、按 `time` 插入保持有序）/ `status`
+- 上下文拆分：`content` 里的 `[评论《xx》] 正文` 用正则拆成 `ctx` + `body`，放 `Card` 里
+- 侧栏这一阶段可以先是静态用户列表（不带筛选）
+
+**完成标准**：
+- [ ] `python server.py --mock` 打开页面，列表和 `web-mock.html` 视觉一致（并排截图对比）
+- [ ] 每 10 秒 mock 推送的新条目出现在正确日期组、正确时间位置
+- [ ] 浏览器 DevTools Network 面板：除了 `127.0.0.1` 没有任何外部请求（离线可用的硬性要求）
+- [ ] 刷新页面不重复、不丢条目
+- [ ] `.gitignore` 加 `!/web/`
+
+提交：`feat: 网页版前端骨架，只读渲染 + SSE 实时更新`
+
+### 阶段 4 — 交互（预计 1 次会话）
+
+- 侧栏：用户列表带色块 + 今日条数，点击筛选；类型 chip 筛选；侧栏收缩成 56px 窄轨（`localStorage: diting.rail`）
+- 日期组折叠，默认只展开今天（`diting.collapsed`）
+- 卡片正文 2 行截断，点击展开/收起
+- 新动态：`new` 事件进来的条目带「新」角标 + 淡入高亮（3 秒后褪去）；用户不在底部时显示 `NewBadge`「↓ N 条新动态」，点击滚到底
+- 跟随滚动：在底部时来新条目自动跟；不在底部不打扰
+- `document.title` 未读数：页面 `visibilityState !== 'visible'` 时累加，切回清零
+
+**完成标准**：
+- [ ] `--mock` 下把页面滚到中间，等新推送：不跳动、右下角出现角标；点角标滚到底且角标消失
+- [ ] 切到别的标签页等 30 秒再切回：标题曾显示 `(3) 谛听` 之类，切回后恢复
+- [ ] 选一个用户 + 一个类型筛选后刷新页面，筛选状态还在
+- [ ] 折叠昨天、刷新，昨天仍折叠；今天永远展开
+
+提交：`feat: 筛选、折叠、新动态角标与跟随滚动`
+
+### 阶段 5 — 设置与控制（预计 1 次会话）
+
+- `POST /api/control`：`start` / `stop` / `clear` / `test_toast` / `quit`。`quit` 回 `{"ok":true}` 后 `threading.Timer(0.5, os._exit, [0])`
+- `POST /api/users`：只更新请求里出现的用户；写 `config.json` 前先读现有内容合并，**不动没出现的用户和其它顶层键**（`weibo_cookie` 等）；成功后 `_broadcast("config", ...)`
+- `Origin` 校验：所有 `POST` 没有 `Origin` 或不等于 `http://127.0.0.1:<port>` 一律 403
+- 前端 `SettingsDrawer`：每用户一行，8 色色板 + 默认、静音开关、查追加开关；保存后 `Toast` 提示
+- 顶栏按钮接上：开始/停止、清空、测试通知、退出（退出弹 `confirm`）
+
+**完成标准**：
+- [ ] 改一个用户颜色保存，`config.json` 里只有该用户的 `color` 变了，`diff` 确认其它字段原样
+- [ ] `curl -X POST -H 'Origin: http://evil.com' 127.0.0.1:17777/api/control -d '{"action":"quit"}'` 返回 403，进程还活着
+- [ ] 页面点「退出」，进程在 1 秒内结束，端口释放
+- [ ] 停止再开始，`_thread` 只有一个活着（`threading.enumerate()` 打日志）——不能退化出重复推送
+
+提交：`feat: 设置抽屉与控制接口`
+
+### 阶段 6 — 收尾（预计 1～2 次会话）
+
+- 深色模式：`prefers-color-scheme` 默认 + 顶栏手动切换（`diting.theme`）
+- 响应式三档断点（§6）；在竖屏副屏上实际摆一下看
+- 「加载更早」：`GET /api/items?before=&limit=`，前端滚到顶触发，首屏改为只取 300 条
+- SSE 断线：`EventSource.onerror` 显示横幅；`onopen` 时若不是首次连接则重拉 `/api/snapshot` 合并补漏
+- `run_gui.bat` 改指向 `server.py`，新增 `run_gui_tk.bat` 指向 `app.py`
+- README：截图换网页版、启动说明；CLAUDE.md：架构章节改写（两个入口变三个、线程模型、SQLite 归属、`--mock` 验证方法），删掉已不成立的 tkinter 限制说明
+- `.gitignore`：确认 `core.py` / `server.py` / `web/` / 新 bat 都已放行
+
+**完成标准**：
+- [ ] 杀掉 `server.py` 再重启，页面横幅出现又消失，期间 mock 推的条目补回来了
+- [ ] 系统切深色，页面跟着变；手动切浅色后系统再切，页面不变
+- [ ] 浏览器窗口拖到 500px 宽，顶栏不溢出、设置抽屉铺满
+- [ ] 造 1000+ 条历史（mock 数据循环塞库）验证「加载更早」翻页不重不漏
+- [ ] 一个全新 clone 按 README 能跑起来
+
+提交拆成多个：`feat: 深色模式与竖屏适配` / `feat: 历史翻页与断线补漏` / `docs: 网页版启动说明与架构文档更新`
+
+### 阶段 7 — 删旧版
+
+真实使用 ≥ 1 周没有回退到 `app.py` 的理由后：删 `app.py` / `run_gui_tk.bat`，`.gitignore` 同步去掉，CLAUDE.md 删掉 tkinter 相关全部段落，`requirements.txt` 去掉 `sv_ttk`。
+
+提交：`chore: 移除 tkinter 旧版`
+
+### 跨阶段的注意事项
+
+- **每个阶段开始前**先 `git log` 确认上一阶段的提交在，再读一遍本节对应阶段的条目——不要凭记忆。
+- **阶段 1 是唯一会碰现有行为的**，其余阶段都是纯新增，坏了也不影响 `app.py`。所以阶段 1 要格外保守：不顺手改任何"看着不顺眼"的逻辑。
+- 阶段 2～6 都依赖 `--mock` 离线验证，真实 `config.json` 只在阶段 1 和阶段 6 末尾各跑一次。
+- 中途发现设计文档写错了（接口字段、事件名等），**先改文档再改代码**，同一个 commit 提交。
 
 ### 验证手段
 
