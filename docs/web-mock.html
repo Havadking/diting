@@ -1,0 +1,569 @@
+<title>谛听</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #f4f5f7;          /* 页面底：偏冷的浅灰，向群青靠一点 */
+    --card: #ffffff;
+    --card-hover: #fbfcfe;
+    --line: #e3e6eb;
+    --line-strong: #cfd4dc;
+    --ink: #1b1f27;
+    --ink-2: #4a5160;
+    --ink-3: #8a91a0;
+    --accent: #1772b4;      /* 群青 */
+    --accent-soft: #e6f0f9;
+    --ok: #1ba784;          /* 竹绿 */
+    --warn: #d6a01d;
+    --danger: #ed5126;      /* 朱红 */
+    --sel: #dbeafe;
+    --new-glow: #fff6d9;
+    --shadow: 0 1px 2px rgba(20, 30, 50, .05), 0 4px 14px rgba(20, 30, 50, .05);
+    --shadow-lg: 0 8px 30px rgba(20, 30, 50, .16);
+
+    --k-post-fg: #0a8f5b;  --k-post-bg: #e4f5ec;
+    --k-reply-fg: #1d4ed8; --k-reply-bg: #e9eefb;
+    --k-repost-fg: #c2620a; --k-repost-bg: #fdf1e2;
+    --k-append-fg: #b3550f; --k-append-bg: #f6ece0;
+
+    --font: "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", "Segoe UI", system-ui, sans-serif;
+    --serif: "Noto Serif SC", "Songti SC", "SimSun", serif;
+    --mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14171d; --card: #1c2028; --card-hover: #21262f;
+      --line: #2a2f3a; --line-strong: #3a4150;
+      --ink: #e7eaf0; --ink-2: #b2b9c7; --ink-3: #737b8c;
+      --accent: #5aa3e0; --accent-soft: #1d2f42;
+      --ok: #3fc39e; --sel: #243b55; --new-glow: #3a3320;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.25);
+      --shadow-lg: 0 8px 30px rgba(0,0,0,.5);
+      --k-post-fg: #4fd39c; --k-post-bg: #17352a;
+      --k-reply-fg: #8fb0ff; --k-reply-bg: #1f2a45;
+      --k-repost-fg: #f0a352; --k-repost-bg: #3a2a16;
+      --k-append-fg: #e59a5c; --k-append-bg: #362619;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14171d; --card: #1c2028; --card-hover: #21262f;
+    --line: #2a2f3a; --line-strong: #3a4150;
+    --ink: #e7eaf0; --ink-2: #b2b9c7; --ink-3: #737b8c;
+    --accent: #5aa3e0; --accent-soft: #1d2f42;
+    --ok: #3fc39e; --sel: #243b55; --new-glow: #3a3320;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.25);
+    --shadow-lg: 0 8px 30px rgba(0,0,0,.5);
+    --k-post-fg: #4fd39c; --k-post-bg: #17352a;
+    --k-reply-fg: #8fb0ff; --k-reply-bg: #1f2a45;
+    --k-repost-fg: #f0a352; --k-repost-bg: #3a2a16;
+    --k-append-fg: #e59a5c; --k-append-bg: #362619;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.55 var(--font); overflow: hidden;
+  }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  button:focus-visible, .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  #root { height: 100%; }
+  .app { display: grid; grid-template-rows: 56px 1fr; grid-template-columns: 232px 1fr; height: 100vh; transition: grid-template-columns .18s ease; }
+  .app.rail { grid-template-columns: 56px 1fr; }
+
+  /* ---------- 顶栏 ---------- */
+  .topbar {
+    grid-column: 1 / -1; display: flex; align-items: center; gap: 16px;
+    padding: 0 20px 0 20px; background: var(--card); border-bottom: 1px solid var(--line);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .iconbtn {
+    display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 8px; color: var(--ink-2);
+  }
+  .iconbtn:hover { background: var(--bg); color: var(--ink); }
+  .iconbtn svg { width: 18px; height: 18px; }
+  .brand-mark {
+    font-family: var(--serif); font-weight: 700; font-size: 22px; letter-spacing: .12em; color: var(--ink);
+  }
+  .status {
+    display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px 5px 9px;
+    border-radius: 999px; background: var(--bg); color: var(--ink-2); font-size: 12.5px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent); }
+  .dot.paused { background: var(--ink-3); box-shadow: none; }
+  .status time { font-family: var(--mono); font-size: 12px; color: var(--ink-3); }
+  .spacer { flex: 1; }
+  .tb-actions { display: flex; gap: 6px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px;
+    border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink-2); font-size: 13px;
+    transition: background .12s, border-color .12s, color .12s;
+  }
+  .btn:hover { background: var(--bg); color: var(--ink); border-color: var(--line-strong); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { filter: brightness(1.06); }
+  .btn.quiet { border-color: transparent; }
+  .btn svg { width: 15px; height: 15px; flex: none; }
+  .btn .lbl { white-space: nowrap; }
+  .menu-wrap { position: relative; }
+  .menu {
+    position: absolute; right: 0; top: 38px; min-width: 168px; z-index: 20; padding: 6px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-lg);
+    display: flex; flex-direction: column; animation: slide .12s ease-out;
+  }
+  .menu button { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 7px; font-size: 13px; color: var(--ink-2); text-align: left; }
+  .menu button:hover { background: var(--bg); color: var(--ink); }
+  .menu button svg { width: 15px; height: 15px; }
+  .menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 2px; }
+  .menu .danger { color: var(--danger); }
+  /* 窄屏（竖屏副屏）：顶栏按钮只留图标，次要操作收进 ⋯ 菜单 */
+  .only-wide { display: inline-flex; }
+  .only-narrow { display: none; }
+  @media (max-width: 900px) {
+    .topbar { padding: 0 12px; gap: 10px; }
+    .tb-actions .btn .lbl { display: none; }
+    .tb-actions .btn { padding: 0 8px; }
+    .only-wide { display: none !important; }
+    .only-narrow { display: inline-flex; }
+    .status .lbl { display: none; }
+  }
+
+  /* ---------- 侧栏 ---------- */
+  .side {
+    border-right: 1px solid var(--line); background: var(--card); padding: 18px 12px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 22px;
+  }
+  .rail .side { padding: 14px 8px; gap: 16px; }
+  .rail .side h4, .rail .urow .nm, .rail .urow .cnt, .rail .chip span, .rail .side-foot { display: none; }
+  .rail .urow { grid-template-columns: 1fr; justify-items: center; padding: 9px 0; }
+  .rail .urow .sw { width: 14px; height: 14px; border-radius: 4px; }
+  .rail .urow.on { box-shadow: inset 0 0 0 2px var(--accent); background: var(--accent-soft); }
+  .rail .kinds { flex-direction: column; align-items: center; gap: 8px; padding: 0; }
+  .rail .chip { width: 26px; padding: 0; justify-content: center; }
+  .rail .chip i { width: 9px; height: 9px; }
+  .divider { display: none; height: 1px; background: var(--line); margin: 0 6px; }
+  .rail .divider { display: block; }
+  .side h4 { margin: 0 8px 8px; font-size: 11px; font-weight: 600; letter-spacing: .12em; color: var(--ink-3); text-transform: uppercase; }
+  .ulist { display: flex; flex-direction: column; gap: 2px; }
+  .urow {
+    display: grid; grid-template-columns: 10px 1fr auto; align-items: center; gap: 10px;
+    padding: 7px 8px; border-radius: 8px; text-align: left; width: 100%;
+  }
+  .urow:hover { background: var(--bg); }
+  .urow.on { background: var(--accent-soft); color: var(--accent); }
+  .urow .sw { width: 10px; height: 10px; border-radius: 3px; }
+  .urow .nm { display: flex; align-items: center; gap: 6px; font-size: 13.5px; overflow: hidden; }
+  .urow .nm span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .urow .cnt { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  .urow.on .cnt { color: var(--accent); }
+  .tag-mini { font-size: 10px; color: var(--ink-3); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; line-height: 15px; }
+  .kinds { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 6px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 999px;
+    border: 1px solid var(--line); font-size: 12.5px; color: var(--ink-2);
+  }
+  .chip i { width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
+  .chip.on { background: var(--kbg); color: var(--c); border-color: transparent; }
+  .chip.off { opacity: .5; text-decoration: line-through; }
+  .side-foot { margin-top: auto; padding: 0 8px; font-size: 11.5px; color: var(--ink-3); line-height: 1.7; }
+  .side-foot b { color: var(--ink-2); font-weight: 500; }
+
+  /* ---------- 主区域 ---------- */
+  .main { position: relative; overflow-y: auto; scroll-behavior: smooth; }
+  .feed { max-width: 880px; margin: 0 auto; padding: 8px 28px 80px; }
+  .dhead {
+    position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px;
+    padding: 14px 0 8px; background: linear-gradient(var(--bg) 78%, transparent);
+  }
+  .dhead button { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); font-size: 13px; padding: 4px 6px 4px 2px; border-radius: 6px; }
+  .dhead button:hover { background: var(--card); }
+  .dhead .chev { transition: transform .15s; display: inline-flex; }
+  .dhead .chev.closed { transform: rotate(-90deg); }
+  .dhead .d { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .dhead .wk { color: var(--ink-3); }
+  .dhead .n { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); padding: 1px 7px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); }
+  .dhead .rule { flex: 1; height: 1px; background: var(--line); }
+
+  .cards { display: flex; flex-direction: column; gap: 8px; }
+  .card {
+    position: relative; display: grid; grid-template-columns: 4px 1fr; overflow: hidden;
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow);
+    transition: transform .12s, box-shadow .12s, border-color .12s;
+  }
+  .card:hover { border-color: var(--line-strong); box-shadow: var(--shadow-lg); transform: translateY(-1px); }
+  .card .stripe { background: var(--uc, var(--line-strong)); }
+  .card .body { padding: 11px 16px 12px 14px; min-width: 0; }
+  .card .head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+  .uname { font-weight: 600; color: var(--uc, var(--ink)); }
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 8px; border-radius: 6px;
+    font-size: 11.5px; font-weight: 500; background: var(--kbg); color: var(--kfg); letter-spacing: .02em;
+  }
+  .bar { color: var(--ink-2); font-size: 13px; }
+  .bar::before { content: "· "; color: var(--ink-3); }
+  .card .t { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  .ctx {
+    display: inline-flex; align-items: center; gap: 5px; margin-bottom: 4px; padding: 2px 8px; border-radius: 6px;
+    background: var(--bg); color: var(--ink-2); font-size: 12px; max-width: 100%;
+  }
+  .ctx b { font-weight: 500; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .txt {
+    color: var(--ink); font-size: 14.5px; line-height: 1.6; max-width: 66ch;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .card.open .txt { display: block; }
+  .card .foot { display: flex; gap: 14px; margin-top: 8px; font-size: 12px; color: var(--ink-3); }
+  .card .foot a { color: var(--accent); text-decoration: none; }
+  .card .foot a:hover { text-decoration: underline; }
+  .card.new { border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); animation: glow 2.4s ease-out; }
+  .card.new .body::after {
+    content: "新"; position: absolute; top: 10px; right: 12px; font-size: 10.5px; font-weight: 600; letter-spacing: .1em;
+    color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 55%, transparent); border-radius: 4px; padding: 0 5px; line-height: 16px;
+  }
+  .card.new .t { margin-right: 34px; }
+  @keyframes glow { from { background: var(--new-glow); } to { background: var(--card); } }
+  .card.append .stripe { background: repeating-linear-gradient(180deg, var(--uc, var(--k-append-fg)) 0 6px, transparent 6px 10px); }
+
+  .fab {
+    position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 3;
+    display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 999px;
+    background: var(--ink); color: var(--bg); box-shadow: var(--shadow-lg); font-size: 13px;
+  }
+
+  /* ---------- 设置抽屉 ---------- */
+  .scrim { position: fixed; inset: 0; background: rgba(10, 14, 22, .32); z-index: 10; }
+  .drawer {
+    position: fixed; top: 0; right: 0; bottom: 0; width: 620px; max-width: 100vw; z-index: 11;
+    background: var(--card); box-shadow: var(--shadow-lg); display: flex; flex-direction: column;
+    animation: slide .18s ease-out;
+  }
+  @keyframes slide { from { transform: translateX(24px); opacity: 0; } }
+  .drawer header { display: flex; align-items: center; gap: 12px; padding: 18px 24px 14px; border-bottom: 1px solid var(--line); }
+  .drawer header h3 { margin: 0; font-size: 16px; font-weight: 600; }
+  .drawer header p { margin: 2px 0 0; font-size: 12.5px; color: var(--ink-3); }
+  .drawer .list { flex: 1; overflow-y: auto; padding: 8px 24px; }
+  .srow { display: grid; grid-template-columns: 150px 1fr auto; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .srow .who { display: flex; flex-direction: column; gap: 2px; }
+  .srow .who b { font-weight: 600; color: var(--uc, var(--ink)); }
+  .srow .who span { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+  .swatches { display: flex; gap: 6px; align-items: center; }
+  .swatch { width: 22px; height: 22px; border-radius: 6px; background: var(--c); border: 2px solid transparent; transition: transform .1s; }
+  .swatch:hover { transform: scale(1.12); }
+  .swatch.on { border-color: var(--ink); box-shadow: 0 0 0 2px var(--card) inset; }
+  .swatch.none { background: none; border: 1px dashed var(--line-strong); color: var(--ink-3); font-size: 10px; }
+  .toggles { display: flex; gap: 14px; }
+  .tg { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-2); cursor: pointer; }
+  .tg i { width: 30px; height: 18px; border-radius: 999px; background: var(--line-strong); position: relative; transition: background .12s; }
+  .tg i::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: left .12s; }
+  .tg.on i { background: var(--accent); }
+  .tg.on i::after { left: 14px; }
+  .drawer footer { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 24px; border-top: 1px solid var(--line); }
+  .legend { display: flex; gap: 10px; flex-wrap: wrap; padding: 12px 24px 4px; font-size: 12px; color: var(--ink-3); }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .legend i { width: 10px; height: 10px; border-radius: 3px; background: var(--c); }
+
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+  @media (max-width: 900px) { .feed { padding: 8px 14px 80px; } .card .body { padding: 10px 12px 11px 12px; } }
+  @media (max-width: 560px) { .drawer { width: 100vw; } .srow { grid-template-columns: 1fr; gap: 8px; } }
+</style>
+
+<div id="root"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
+<script type="text/babel" data-presets="react">
+const { useState, useMemo } = React;
+
+/* ---- 示例数据（静态演示，非真实抓取）---- */
+const PALETTE = [
+  ["朱红", "#ED5126"], ["橘橙", "#F97D1C"], ["土黄", "#D6A01D"], ["竹绿", "#1BA784"],
+  ["翠蓝", "#1E9EB3"], ["群青", "#1772B4"], ["青莲", "#8B2671"], ["品红", "#EF3473"],
+];
+const KINDS = {
+  "发帖": { fg: "var(--k-post-fg)",   bg: "var(--k-post-bg)" },
+  "评论": { fg: "var(--k-reply-fg)",  bg: "var(--k-reply-bg)" },
+  "转发": { fg: "var(--k-repost-fg)", bg: "var(--k-repost-bg)" },
+  "追加": { fg: "var(--k-append-fg)", bg: "var(--k-append-bg)" },
+};
+const USERS = [
+  { uid: "6112353845000000", name: "股海老船长", color: "#1772B4", check_appends: true },
+  { uid: "7423000112000000", name: "半仓过节",   color: "#ED5126" },
+  { uid: "5091223300000000", name: "茅台信徒",   color: "#1BA784", mute: true },
+  { uid: "8830011290000000", name: "量化小张",   color: null },
+];
+const ITEMS = [
+  { key: "P1", name: "股海老船长", kind: "发帖", bar: "中际旭创", time: "2026-09-14 14:31:07", isNew: true,
+    content: "光模块这波不是炒概念，是真有订单。刚看了英伟达最新的供应链数据，1.6T 的放量节奏比上季度预期提前了一个季度，国内这几家的份额没丢反涨。回调就是上车机会，我加了三成。" },
+  { key: "A1", name: "股海老船长", kind: "追加", bar: "中际旭创", time: "2026-09-14 14:12:40", isNew: true,
+    ctx: "光模块这波不是炒概念，是真有订单",
+    content: "作者更新：补充一下，仓位控制在 5 成以内，别梭哈。今天尾盘量能不太够，明天看能不能站稳 5 日线。" },
+  { key: "R1", name: "半仓过节", kind: "评论", bar: "宁德时代", time: "2026-09-14 13:58:22",
+    ctx: "宁德三季度出货量超预期，储能业务翻倍",
+    content: "储能确实是亮点，但动力电池那块的毛利还在往下走，别只看营收。" },
+  { key: "P2", name: "茅台信徒", kind: "发帖", bar: "贵州茅台", time: "2026-09-14 11:20:05",
+    content: "1500 以下每跌 50 加一档，这个策略我执行第三年了，年化比大部分基金经理强。批发价企稳了，中秋动销比去年好，慌什么。" },
+  { key: "F1", name: "半仓过节", kind: "转发", bar: "沪深300", time: "2026-09-14 10:02:51",
+    ctxUser: "宏观小酒馆", ctx: "9 月降准概率复盘",
+    content: "转给大家看看，这个复盘做得挺细。我的看法：流动性宽松已经 price in 了，别把降准当利好追。" },
+  { key: "P3", name: "量化小张", kind: "发帖", bar: "中证1000", time: "2026-09-14 09:31:30",
+    content: "开盘 1 分钟小市值因子 IC 又转负了，模型今天减了 20% 敞口。今天大概率是权重日。" },
+  { key: "P4", name: "股海老船长", kind: "发帖", bar: "长江电力", time: "2026-09-13 20:14:18",
+    content: "周末复盘：高股息这边又新高了，现在市场就两条腿，一条 AI 硬件一条红利，中间的都没人要。持仓不动。" },
+  { key: "R2", name: "茅台信徒", kind: "评论", bar: "五粮液", time: "2026-09-13 16:40:00",
+    ctx: "五粮液批价跌破 900 了",
+    content: "老窖和五粮液的渠道库存问题比茅台严重得多，这个位置我不会碰。" },
+  { key: "P5", name: "量化小张", kind: "发帖", bar: "北证50", time: "2026-09-13 15:05:12",
+    content: "北交所今天成交额创月内新高，微盘风格有回归迹象，但 9 月的季节性不太支持，先观察两天。" },
+  { key: "P6", name: "半仓过节", kind: "发帖", bar: "上证指数", time: "2026-09-12 15:02:44",
+    content: "收盘了。这周就一句话：不追高，不割肉，持币过节。" },
+];
+const WEEK = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+const weekday = d => WEEK[new Date(d + "T00:00:00").getDay()];
+const TODAY = "2026-09-14";
+
+/* ---- 小图标 ---- */
+const I = {
+  pause: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>,
+  play:  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 5v14l12-7z"/></svg>,
+  gear:  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>,
+  trash: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>,
+  bell:  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/></svg>,
+  moon:  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>,
+  power: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18.4 6.6a9 9 0 1 1-12.8 0M12 2v10"/></svg>,
+  down:  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12l7 7 7-7"/></svg>,
+  menu:  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 7h16M4 12h16M4 17h16"/></svg>,
+  more:  <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>,
+  sun:   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>,
+  chev:  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><path d="M6 9l6 6 6-6"/></svg>,
+  mute:  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12"><path d="M13.7 21a2 2 0 0 1-3.4 0M18.6 13A17 17 0 0 1 18 8a6 6 0 0 0-9.3-5M6.3 6.3A6 6 0 0 0 6 8c0 7-3 9-3 9h14M1 1l22 22"/></svg>,
+};
+
+function Card({ it, user, open, onToggle }) {
+  const k = KINDS[it.kind];
+  const cls = ["card", it.isNew && "new", open && "open", it.kind === "追加" && "append"].filter(Boolean).join(" ");
+  const style = user?.color ? { "--uc": user.color } : {};
+  return (
+    <div className={cls} style={style} tabIndex={0} onClick={onToggle}
+         onKeyDown={e => (e.key === "Enter" || e.key === " ") && onToggle()}>
+      <div className="stripe"/>
+      <div className="body">
+        <div className="head">
+          <span className="uname">{it.name}</span>
+          <span className="pill" style={{ "--kbg": k.bg, "--kfg": k.fg }}>{it.kind}</span>
+          <span className="bar">{it.bar}</span>
+          <time className="t">{it.time.slice(11, 16)}</time>
+        </div>
+        {it.ctx && (
+          <div className="ctx">
+            {it.kind === "评论" ? "评论" : it.kind === "转发" ? `转发自 ${it.ctxUser}` : "追加于"}
+            <b>《{it.ctx}》</b>
+          </div>
+        )}
+        <div className="txt">{it.content}</div>
+        {open && (
+          <div className="foot">
+            <a href="#" onClick={e => e.stopPropagation()}>打开原帖 ↗</a>
+            <span>{it.time}</span>
+            <span>{it.key}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Drawer({ onClose }) {
+  const [pend, setPend] = useState(() => Object.fromEntries(USERS.map(u => [u.name, { ...u }])));
+  const upd = (nm, patch) => setPend(p => ({ ...p, [nm]: { ...p[nm], ...patch } }));
+  return (
+    <>
+      <div className="scrim" onClick={onClose}/>
+      <aside className="drawer" role="dialog" aria-label="用户设置">
+        <header>
+          <div>
+            <h3>用户设置</h3>
+            <p>配色 · 静音 · 查追加 — 改动保存后立刻生效，不用重启</p>
+          </div>
+          <span className="spacer"/>
+          <button className="btn quiet" onClick={onClose}>关闭</button>
+        </header>
+        <div className="legend">
+          {PALETTE.map(([nm, hx]) => <span key={hx}><i style={{ "--c": hx }}/>{nm}</span>)}
+        </div>
+        <div className="list">
+          {USERS.map(u => {
+            const p = pend[u.name];
+            return (
+              <div className="srow" key={u.uid} style={p.color ? { "--uc": p.color } : {}}>
+                <div className="who"><b>{u.name}</b><span>{u.uid}</span></div>
+                <div className="swatches">
+                  <button className={"swatch none" + (!p.color ? " on" : "")} title="默认（按类型配色）"
+                          onClick={() => upd(u.name, { color: null })}>默认</button>
+                  {PALETTE.map(([nm, hx]) => (
+                    <button key={hx} className={"swatch" + (p.color === hx ? " on" : "")} title={nm}
+                            style={{ "--c": hx }} onClick={() => upd(u.name, { color: hx })}/>
+                  ))}
+                </div>
+                <div className="toggles">
+                  <label className={"tg" + (p.mute ? " on" : "")} onClick={() => upd(u.name, { mute: !p.mute })}><i/>静音</label>
+                  <label className={"tg" + (p.check_appends ? " on" : "")} onClick={() => upd(u.name, { check_appends: !p.check_appends })}><i/>查追加</label>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <footer>
+          <button className="btn" onClick={onClose}>取消</button>
+          <button className="btn primary" onClick={onClose}>保存</button>
+        </footer>
+      </aside>
+    </>
+  );
+}
+
+function App() {
+  const [running, setRunning] = useState(true);
+  const [dark, setDark] = useState(false);
+  const [drawer, setDrawer] = useState(false);
+  const [userF, setUserF] = useState(null);
+  const [kindOff, setKindOff] = useState(new Set());
+  const [collapsed, setCollapsed] = useState(new Set(["2026-09-12"]));
+  const [openKey, setOpenKey] = useState("A1");
+  // 侧栏收起状态：记住上次选择；第一次打开时窄屏（竖屏副屏）默认收起
+  const [rail, setRail] = useState(() => {
+    try { const v = localStorage.getItem("diting.rail"); if (v !== null) return v === "1"; } catch (e) {}
+    return window.innerWidth < 900;
+  });
+  const [menu, setMenu] = useState(false);
+  React.useEffect(() => { try { localStorage.setItem("diting.rail", rail ? "1" : "0"); } catch (e) {} }, [rail]);
+  React.useEffect(() => {
+    if (!menu) return;
+    const h = () => setMenu(false);
+    window.addEventListener("click", h); return () => window.removeEventListener("click", h);
+  }, [menu]);
+
+  React.useEffect(() => {
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+  }, [dark]);
+
+  const byUser = useMemo(() => Object.fromEntries(USERS.map(u => [u.name, u])), []);
+  const todayCount = useMemo(() => {
+    const m = {}; ITEMS.filter(i => i.time.startsWith(TODAY)).forEach(i => m[i.name] = (m[i.name] || 0) + 1); return m;
+  }, []);
+  const shown = ITEMS.filter(i => (!userF || i.name === userF) && !kindOff.has(i.kind));
+  const groups = useMemo(() => {
+    const g = {}; shown.forEach(i => (g[i.time.slice(0, 10)] ||= []).push(i));
+    return Object.entries(g).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [shown]);
+  const toggleKind = k => setKindOff(s => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  const toggleDate = d => setCollapsed(s => { const n = new Set(s); n.has(d) ? n.delete(d) : n.add(d); return n; });
+
+  return (
+    <div className={"app" + (rail ? " rail" : "")}>
+      <header className="topbar">
+        <div className="brand">
+          <button className="iconbtn" title={rail ? "展开侧栏" : "收起侧栏"} onClick={() => setRail(r => !r)}>{I.menu}</button>
+          <span className="brand-mark">谛听</span>
+        </div>
+        <div className="status" title={running ? "运行中 · 上次检查 14:32:05" : "已暂停"}>
+          <span className={"dot" + (running ? "" : " paused")}/>
+          <span className="lbl">{running ? "运行中" : "已暂停"} · 上次检查</span> <time>14:32:05</time>
+        </div>
+        <span className="spacer"/>
+        <div className="tb-actions">
+          <button className="btn" title={running ? "停止监控" : "开始监控"} onClick={() => setRunning(r => !r)}>
+            {running ? I.pause : I.play}<span className="lbl">{running ? "停止监控" : "开始监控"}</span>
+          </button>
+          <button className="btn" title="用户设置" onClick={() => setDrawer(true)}>{I.gear}<span className="lbl">设置</span></button>
+          <button className="btn quiet only-wide" title="测试通知">{I.bell}</button>
+          <button className="btn quiet only-wide" title="清空列表">{I.trash}</button>
+          <button className="btn quiet only-wide" title="深色模式" onClick={() => setDark(d => !d)}>{dark ? I.sun : I.moon}</button>
+          <button className="btn quiet only-wide" title="退出程序">{I.power}</button>
+          <div className="menu-wrap only-narrow">
+            <button className="btn quiet" title="更多" onClick={e => { e.stopPropagation(); setMenu(m => !m); }}>{I.more}</button>
+            {menu && (
+              <div className="menu" onClick={e => e.stopPropagation()}>
+                <button>{I.bell}测试通知</button>
+                <button>{I.trash}清空列表</button>
+                <button onClick={() => setDark(d => !d)}>{dark ? I.sun : I.moon}{dark ? "浅色模式" : "深色模式"}</button>
+                <hr/>
+                <button className="danger">{I.power}退出程序</button>
+              </div>
+            )}
+          </div>
+        </div>
+      </header>
+
+      <nav className="side">
+        <div>
+          <h4>监控用户</h4>
+          <div className="ulist">
+            <button className={"urow" + (!userF ? " on" : "")} onClick={() => setUserF(null)} title="全部用户">
+              <span className="sw" style={{ background: "var(--line-strong)" }}/>
+              <span className="nm"><span>全部</span></span>
+              <span className="cnt">{ITEMS.filter(i => i.time.startsWith(TODAY)).length}</span>
+            </button>
+            {USERS.map(u => (
+              <button key={u.uid} className={"urow" + (userF === u.name ? " on" : "")} onClick={() => setUserF(u.name)} title={u.name + "（今日 " + (todayCount[u.name] || 0) + " 条）"}>
+                <span className="sw" style={{ background: u.color || "var(--line-strong)" }}/>
+                <span className="nm"><span>{u.name}</span>{u.mute && I.mute}{u.check_appends && <span className="tag-mini">追加</span>}</span>
+                <span className="cnt">{todayCount[u.name] || 0}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="divider"/>
+        <div>
+          <h4>动态类型</h4>
+          <div className="kinds">
+            {Object.entries(KINDS).map(([k, c]) => (
+              <button key={k} className={"chip " + (kindOff.has(k) ? "off" : "on")}
+                      style={{ "--c": c.fg, "--kbg": c.bg }} onClick={() => toggleKind(k)} title={k}><i/><span>{k}</span></button>
+            ))}
+          </div>
+        </div>
+        <div className="side-foot">
+          轮询间隔 <b>60 s</b> · 查追加 <b>300 s</b><br/>
+          已存 <b>1,284</b> 条 · messages.db
+        </div>
+      </nav>
+
+      <main className="main">
+        <div className="feed">
+          {groups.map(([d, list]) => (
+            <section key={d}>
+              <div className="dhead">
+                <button onClick={() => toggleDate(d)}>
+                  <span className={"chev" + (collapsed.has(d) ? " closed" : "")}>{I.chev}</span>
+                  <span className="d">{d === TODAY ? "今天" : d}</span>
+                  <span className="wk">{weekday(d)}{d === TODAY ? " · " + d : ""}</span>
+                </button>
+                <span className="n">{list.length}</span>
+                <span className="rule"/>
+              </div>
+              {!collapsed.has(d) && (
+                <div className="cards">
+                  {list.map(it => (
+                    <Card key={it.key} it={it} user={byUser[it.name]} open={openKey === it.key}
+                          onToggle={() => setOpenKey(k => k === it.key ? null : it.key)}/>
+                  ))}
+                </div>
+              )}
+            </section>
+          ))}
+        </div>
+        <button className="fab">{I.down}<span>2 条新动态</span></button>
+      </main>
+
+      {drawer && <Drawer onClose={() => setDrawer(false)}/>}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
