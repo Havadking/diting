@@ -80,6 +80,151 @@
     );
   }
 
+  /* ---------- 股票代码/名称自动识别与行情联动增强 ---------- */
+  const POPULAR_STOCKS = {
+    // 光模块 / CPO / AI硬件
+    "中际旭创": "300308", "新易盛": "300502", "天孚通信": "300394", "工业富联": "601138",
+    "中科曙光": "603019", "浪潮信息": "000977", "软通动力": "301236", "胜宏科技": "300476",
+    // 芯片 / 半导体 / 算力
+    "寒武纪": "688256", "海光信息": "688041", "中芯国际": "688981", "北方华创": "002371",
+    "兆易创新": "603986", "韦尔股份": "603501", "澜起科技": "688008",
+    // 新能源 / 电池 / 汽车
+    "宁德时代": "300750", "比亚迪": "002594", "赛力斯": "601127", "长安汽车": "000625",
+    "江淮汽车": "600418", "长城汽车": "601633", "亿纬锂能": "300014",
+    // 白酒 / 消费
+    "贵州茅台": "600519", "五粮液": "000858", "泸州老窖": "000568", "山西汾酒": "600809",
+    // 券商 / 金融
+    "东方财富": "300059", "同花顺": "300033", "指南针": "300803", "中信证券": "600030",
+    "中国平安": "601318", "招商银行": "600036",
+    // 消费电子 / PCB / 铜箔材料
+    "立讯精密": "002475", "歌尔股份": "002241", "沪电股份": "002463", "生益科技": "600183",
+    "铜冠铜箔": "301217", "德福科技": "301511", "致尚科技": "301486", "金牛化工": "600722",
+    "莲花控股": "600186", "诺德股份": "600110", "桂林旅游": "000978",
+    // 资源 / 红利
+    "紫金矿业": "601899", "洛阳钼业": "603993", "长江电力": "600900", "中国神华": "601088",
+    "中国移动": "600941", "中国海油": "600938", "药明康德": "603259",
+    // 核心指数
+    "上证指数": "000001", "沪深300": "000300", "创业板指": "399006", "科创50": "000688"
+  };
+
+  function getMarket(code) {
+    if (!code || code.length !== 6) return "sh";
+    if (/^(?:60[0135]|68[89]|900|51|56|58)/.test(code)) return "sh";
+    if (/^(?:00[0123]|30[01]|200|15|16)/.test(code)) return "sz";
+    if (/^(?:920|8[378]|43)/.test(code)) return "bj";
+    return "sh";
+  }
+
+  function getStockQuoteUrl(code, market) {
+    const m = (market || getMarket(code)).toLowerCase();
+    if (m === "bj") return `https://quote.eastmoney.com/concept/bj${code}.html`;
+    return `https://quote.eastmoney.com/${m}${code}.html`;
+  }
+
+  function parseStockMatch(matchText, stockDict) {
+    if (!matchText) return null;
+    // 1. $Name(Code)$ 如 $莲花控股(SH600186)$
+    let m = /^\$([^\$\r\n\(\)]+?)\((?:([A-Za-z]{2}))?(\d{6})\)\$$/.exec(matchText);
+    if (m) {
+      const [, name, market, code] = m;
+      return { text: matchText, name: name.trim(), code, market: market || getMarket(code) };
+    }
+    // 2. Name(Code) / Name（Code） 如 莲花控股(600186) 或 德福科技（SZ301511）
+    m = /^([^\r\n\(\)（）]+?)[（\(](?:([A-Za-z]{2}))?(\d{6})[）\)]$/.exec(matchText);
+    if (m) {
+      const [, name, market, code] = m;
+      return { text: matchText, name: name.trim(), code, market: market || getMarket(code) };
+    }
+    // 3. $Code$ 如 $SH600186$ 或 $600186$
+    m = /^\$(?:([A-Za-z]{2}))?(\d{6})\$$/.exec(matchText);
+    if (m) {
+      const [, market, code] = m;
+      return { text: matchText, name: "", code, market: market || getMarket(code) };
+    }
+    // 4. $Name$ 如 $莲花控股$
+    m = /^\$([^\$\r\n]+?)\$$/.exec(matchText);
+    if (m && stockDict && stockDict[m[1].trim()]) {
+      const name = m[1].trim();
+      const code = stockDict[name];
+      return { text: matchText, name, code, market: getMarket(code) };
+    }
+    // 5. SH600186 / SZ301217
+    m = /^([A-Za-z]{2})(\d{6})$/.exec(matchText);
+    if (m) return { text: matchText, name: "", code: m[2], market: m[1] };
+    // 6. 600186.SH / 301217.SZ
+    m = /^(\d{6})\.([A-Za-z]{2})$/.exec(matchText);
+    if (m) return { text: matchText, name: "", code: m[1], market: m[2] };
+    // 7. 纯 6 位 A 股证券代码
+    m = /^(\d{6})$/.exec(matchText);
+    if (m) return { text: matchText, name: "", code: m[1], market: getMarket(m[1]) };
+    // 8. 字典中的股票名称/吧名
+    if (stockDict && stockDict[matchText]) {
+      const code = stockDict[matchText];
+      return { text: matchText, name: matchText, code, market: getMarket(code) };
+    }
+    return null;
+  }
+
+  function buildStockRegex(stockDict) {
+    const names = Object.keys(stockDict || {}).filter(k => k.length >= 2).sort((a, b) => b.length - a.length);
+    const namePattern = names.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+    const patterns = [
+      "(\\$[^\\$\\r\\n\\(\\)]+?\\((?:[A-Za-z]{2})?\\d{6}\\)\\$)",
+      "([\\u4e00-\\u9fa5A-Za-z0-9]{2,8}[（\\(](?:[A-Za-z]{2})?\\d{6}[）\\)])",
+      "(\\$[^\\$\\r\\n]{2,12}\\$)",
+      "(?<![0-9a-zA-Z])((?:SH|SZ|BJ)\\d{6})(?![0-9a-zA-Z])",
+      "(?<![0-9a-zA-Z])(\\d{6}\\.(?:SH|SZ|BJ))(?![0-9a-zA-Z])",
+      "(?<![0-9a-zA-Z])(60[0135]\\d{3}|68[89]\\d{3}|00[0123]\\d{3}|30[01]\\d{3}|920\\d{3}|8[37]\\d{4}|43\\d{4}|51\\d{4}|15\\d{4}|16\\d{4})(?![0-9a-zA-Z])"
+    ];
+    if (namePattern) patterns.push("(" + namePattern + ")");
+    return new RegExp(patterns.join("|"), "gi");
+  }
+
+  function renderRichContent(text, kw, stockDict, stockRegex) {
+    if (!text) return "";
+    if (!stockRegex) return highlight(text, kw);
+
+    const elements = [];
+    let lastIdx = 0;
+    let m;
+    stockRegex.lastIndex = 0;
+
+    while ((m = stockRegex.exec(text)) !== null) {
+      if (m.index > lastIdx) {
+        elements.push(highlight(text.slice(lastIdx, m.index), kw));
+      }
+      const matchText = m[0];
+      const info = parseStockMatch(matchText, stockDict);
+      if (info && info.code) {
+        const url = getStockQuoteUrl(info.code, info.market);
+        const isTag = matchText.startsWith("$") && matchText.endsWith("$");
+        const tip = info.name
+          ? `查看 ${info.name} (${info.code}) 东方财富个股行情 ↗`
+          : `查看 ${info.code} 东方财富个股行情 ↗`;
+        elements.push(html`
+          <a class=${"stock-link" + (isTag ? " stock-tag" : "")}
+             href=${url}
+             target="_blank"
+             rel="noopener"
+             title=${tip}
+             key=${m.index}
+             onClick=${e => e.stopPropagation()}>
+            ${highlight(matchText, kw)}
+          </a>
+        `);
+      } else {
+        elements.push(highlight(matchText, kw));
+      }
+      lastIdx = stockRegex.lastIndex;
+    }
+
+    if (lastIdx < text.length) {
+      elements.push(highlight(text.slice(lastIdx), kw));
+    }
+
+    return elements.length === 1 ? elements[0] : elements;
+  }
+
 
 
   /* ---------- 正文里的上下文前缀拆分 ----------
@@ -171,12 +316,23 @@
   const BOTTOM_SLACK = 40;    // 距底部多少像素以内算"在底部"
 
   /* ---------- 组件 ---------- */
-  function Card({ it, color, open, isNew, onToggle, kw }) {
+  function Card({ it, color, open, isNew, onToggle, kw, stockDict, stockRegex }) {
     const k = KINDS[it.kind] || KINDS["发帖"];
     const { ctx, body } = useMemo(() => splitCtx(it), [it]);
     const cls = ["card", open && "open", isNew && "new", it.kind === "追加" && "append"].filter(Boolean).join(" ");
     const style = color ? { "--uc": color } : undefined;
     const titleTip = !open ? `${it.name} [${it.kind}] ${it.bar && it.bar !== "—" ? "· " + it.bar : ""}: ${it.content || ""}` : undefined;
+
+    const barCode = useMemo(() => {
+      if (it.link) {
+        const m = /news,(\d{6})/i.exec(it.link);
+        if (m) return m[1];
+      }
+      if (it.bar && stockDict && stockDict[it.bar]) return stockDict[it.bar];
+      return "";
+    }, [it.link, it.bar, stockDict]);
+    const barUrl = barCode ? getStockQuoteUrl(barCode) : null;
+
     return html`
       <div class=${cls} style=${style} tabIndex="0" onClick=${onToggle} data-key=${it.key} title=${titleTip}
            onKeyDown=${e => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onToggle())}>
@@ -185,14 +341,19 @@
           <div class="head">
             <span class="uname">${highlight(it.name, kw)}</span>
             <span class="pill" style=${{ "--kbg": k.bg, "--kfg": k.fg }}>${it.kind}</span>
-            ${it.bar && it.bar !== "—" && html`<span class="bar">${highlight(it.bar, kw)}</span>`}
+            ${it.bar && it.bar !== "—" && (barUrl ? html`
+              <a class="bar stock-bar-link" href=${barUrl} target="_blank" rel="noopener"
+                 title=${"查看 " + it.bar + " 东方财富行情 ↗"} onClick=${e => e.stopPropagation()}>
+                ${highlight(it.bar, kw)}
+              </a>` : html`<span class="bar">${highlight(it.bar, kw)}</span>`)}
             <time class="t" dateTime=${it.time}>${it.time.slice(11, 16)}</time>
           </div>
-          ${ctx && html`<div class="ctx">${ctx.label}${ctx.title && html`<b>《${highlight(ctx.title, kw)}》</b>`}</div>`}
-          <div class="txt">${highlight(body, kw)}</div>
+          ${ctx && html`<div class="ctx">${ctx.label}${ctx.title && html`<b>《${renderRichContent(ctx.title, kw, stockDict, stockRegex)}》</b>`}</div>`}
+          <div class="txt">${renderRichContent(body, kw, stockDict, stockRegex)}</div>
           ${open && html`
             <div class="foot">
               ${it.link && html`<a href=${it.link} target="_blank" rel="noopener" onClick=${e => e.stopPropagation()}>打开原帖 ↗</a>`}
+              ${barUrl && html`<a href=${barUrl} target="_blank" rel="noopener" onClick=${e => e.stopPropagation()}>行情 ↗</a>`}
               <span>${it.time}</span>
               <span>${it.key}</span>
             </div>`}
@@ -210,7 +371,7 @@
       </div>`;
   }
 
-  function DateGroup({ date, list, isToday, collapsed, onToggle, colorOf, openKey, setOpenKey, newKeys, kw, firstUnreadKey, dividerTime, onClearDivider }) {
+  function DateGroup({ date, list, isToday, collapsed, onToggle, colorOf, openKey, setOpenKey, newKeys, kw, firstUnreadKey, dividerTime, onClearDivider, stockDict, stockRegex }) {
     return html`
       <section>
         <div class="dhead">
@@ -228,7 +389,8 @@
               <${React.Fragment} key=${it.key}>
                 ${it.key === firstUnreadKey && html`<${UnreadDivider} time=${dividerTime} onClear=${onClearDivider}/>`}
                 <${Card} it=${it} color=${colorOf(it.name)} open=${openKey === it.key} isNew=${newKeys.has(it.key)}
-                         kw=${kw} onToggle=${() => setOpenKey(k => (k === it.key ? null : it.key))}/>
+                         kw=${kw} stockDict=${stockDict} stockRegex=${stockRegex}
+                         onToggle=${() => setOpenKey(k => (k === it.key ? null : it.key))}/>
               </${React.Fragment}>`)}
           </div>`}
       </section>`;
@@ -709,6 +871,42 @@
     const toggleKind = k => setFilter(f => { const n = new Set(f.kindOff); n.has(k) ? n.delete(k) : n.add(k); return { ...f, kindOff: n }; });
     const filtering = filter.user || filter.kindOff.size > 0;
 
+    const stockDict = useMemo(() => {
+      const dict = { ...POPULAR_STOCKS };
+      for (const it of s.items) {
+        if (!it) continue;
+        let code = "";
+        if (it.link) {
+          const m = /news,(\d{6})/i.exec(it.link);
+          if (m) code = m[1];
+        }
+        if (it.bar && it.bar !== "—") {
+          if (code) {
+            dict[it.bar] = code;
+            if (it.bar.endsWith("吧")) {
+              const nm = it.bar.slice(0, -1);
+              if (nm.length >= 2) dict[nm] = code;
+            }
+          }
+        }
+        if (it.content) {
+          const tagRe = /\$([^\$\r\n\(\)]+?)\((?:[A-Za-z]{2})?(\d{6})\)\$/g;
+          let tm;
+          while ((tm = tagRe.exec(it.content)) !== null) {
+            const nm = tm[1].trim();
+            const c = tm[2];
+            if (nm.length >= 2 && nm.length <= 8) {
+              dict[nm] = c;
+              dict[nm + "吧"] = c;
+            }
+          }
+        }
+      }
+      return dict;
+    }, [s.items]);
+
+    const stockRegex = useMemo(() => buildStockRegex(stockDict), [stockDict]);
+
     const st = s.status;
     return html`
       <div class=${"app" + (rail ? " rail" : "") + (dense ? " dense" : "")}>
@@ -719,7 +917,10 @@
           </div>
           <div class="status" title=${st.text}>
             <span class=${"dot" + (st.running && s.connected ? "" : " paused")}/>
-            <span class="lbl">${!s.connected ? "已断开" : st.running ? "运行中" : "已停止"}${st.last_check ? " · 上次检查" : ""}</span>
+            <span class="lbl">
+              <span class="lbl-main">${!s.connected ? "已断开" : st.running ? "运行中" : "已停止"}</span>
+              ${st.last_check && html`<span class="lbl-sub"> · 上次检查</span>`}
+            </span>
             ${st.last_check && html` <time>${st.last_check}</time>`}
           </div>
 
@@ -824,7 +1025,8 @@
             ${groups.map(([d, list]) => html`
               <${DateGroup} key=${d} date=${d} list=${list} isToday=${d === td} collapsed=${collapsedOf(d)}
                             onToggle=${() => toggleDate(d)} colorOf=${colorOf} openKey=${openKey} setOpenKey=${setOpenKey} newKeys=${newKeys} kw=${activeQuery}
-                            firstUnreadKey=${firstUnreadKey} dividerTime=${dividerTime} onClearDivider=${() => setFirstUnreadKey(null)}/>`)}
+                            firstUnreadKey=${firstUnreadKey} dividerTime=${dividerTime} onClearDivider=${() => setFirstUnreadKey(null)}
+                            stockDict=${stockDict} stockRegex=${stockRegex}/>`)}
             ${s.loaded && !s.items.length && html`<p class="empty">还没有任何动态。</p>`}
             ${s.loaded && s.items.length > 0 && !filteredShown.length && html`<p class="empty">当前筛选/搜索下没有动态。<button class="link" onClick=${() => { clearSearch(); setFilter({ user: null, kindOff: new Set() }); }}>清除筛选与搜索</button></p>`}
           </div>

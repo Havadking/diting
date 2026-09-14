@@ -48,8 +48,12 @@ _RAW = [
 _ICON = {"发帖": "📝", "评论": "💬", "转发": "🔁", "追加": "➕"}
 
 # 随机新动态的文案池
+_BAR_CODES = {
+    "中际旭创": "300308", "宁德时代": "300750", "贵州茅台": "600519",
+    "长江电力": "600900", "五粮液": "000858"
+}
 _NEW_POOL = [
-    ("发帖", "盘中快报：{bar} 放量拉升，成交额已经超过昨天全天，注意节奏。"),
+    ("发帖", "盘中快报：${bar}({code})$ 放量拉升，成交额已经超过昨天全天，注意节奏。"),
     ("发帖", "刚看了 {bar} 的龙虎榜，机构席位净买入，游资在出。"),
     ("评论", "[评论《{bar}今天怎么看》] 缩量阴跌比放量下跌难受，但也说明没人恐慌。"),
     ("转发", "[转发自 财经早知道《{bar} 深度》] 写得比券商研报实在，推荐一读。"),
@@ -64,10 +68,12 @@ def _entry(day_off, hms, name, kind, bar, content, key=None):
     else:
         d = (datetime.now() - timedelta(days=day_off)).strftime("%Y-%m-%d")
         t = "%s %s" % (d, hms)
+    code = _BAR_CODES.get(bar)
+    link = ("https://guba.eastmoney.com/news,%s,123456789.html" % code) if code else "https://guba.eastmoney.com/"
     return {
         "key": key or ("M%s_%s" % (kind[0], t.replace("-", "").replace(":", "").replace(" ", ""))),
         "name": name, "kind": kind, "icon": _ICON[kind], "time": t, "bar": bar,
-        "content": content, "link": "https://guba.eastmoney.com/",
+        "content": content, "link": link,
     }
 
 
@@ -119,8 +125,9 @@ class MockCore(core.MonitorCore):
                     kind, tpl = rnd.choice(_NEW_POOL)
                     u = rnd.choice(USERS)
                     bar = rnd.choice(_BARS)
+                    code = _BAR_CODES.get(bar, "300308")
                     hms = "%02d:%02d:%02d" % (rnd.randint(9, 15), rnd.randint(0, 59), rnd.randint(0, 59))
-                    rows.append(_entry(day, hms, u["name"], kind, bar, tpl.format(bar=bar)))
+                    rows.append(_entry(day, hms, u["name"], kind, bar, tpl.format(bar=bar, code=code)))
             rows.sort(key=lambda x: (x["time"], x["key"]))
             self._older_cache = rows
         return self._older_cache
@@ -217,9 +224,10 @@ class MockCore(core.MonitorCore):
             kind, tpl = random.choice(_NEW_POOL)
             u = random.choice(USERS)
             bar = random.choice(_BARS)
+            code = _BAR_CODES.get(bar, "300308")
             now = datetime.now()
             e = _entry(0, now.strftime("%H:%M:%S"), u["name"], kind, bar,
-                       tpl.format(bar=bar), key="MOCK%d" % self._seq)
+                       tpl.format(bar=bar, code=code), key="MOCK%d" % self._seq)
             with self.lock:
                 self.items.append(e)
                 self.item_keys.add(e["key"])

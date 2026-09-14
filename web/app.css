@@ -95,7 +95,7 @@
     grid-column: 1 / -1; display: flex; align-items: center; gap: 16px;
     padding: 0 20px 0 20px; background: var(--card); border-bottom: 1px solid var(--line);
   }
-  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
   .iconbtn {
     display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 8px; color: var(--ink-2);
   }
@@ -107,10 +107,14 @@
   .status {
     display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px 5px 9px;
     border-radius: 999px; background: var(--bg); color: var(--ink-2); font-size: 12.5px;
+    white-space: nowrap; flex-shrink: 0;
   }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent); }
+  .status .lbl { white-space: nowrap; }
+  .status .lbl-main { white-space: nowrap; }
+  .status .lbl-sub { white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent); flex-shrink: 0; }
   .dot.paused { background: var(--ink-3); box-shadow: none; }
-  .status time { font-family: var(--mono); font-size: 12px; color: var(--ink-3); }
+  .status time { font-family: var(--mono); font-size: 12px; color: var(--ink-3); flex-shrink: 0; }
   .spacer { flex: 1; }
   .tb-actions { display: flex; gap: 6px; }
   .btn {
@@ -138,6 +142,11 @@
   /* 窄屏（竖屏副屏）：顶栏按钮只留图标，次要操作收进 ⋯ 菜单 */
   .only-wide { display: inline-flex; }
   .only-narrow { display: none; }
+  @media (max-width: 1150px) {
+    .tb-actions .btn .lbl { display: none; }
+    .tb-actions .btn { padding: 0 8px; }
+    .status .lbl-sub { display: none; }
+  }
   @media (max-width: 900px) {
     .topbar { padding: 0 12px; gap: 10px; }
     .tb-actions .btn .lbl { display: none; }
@@ -313,7 +322,7 @@
   /* ---------- 搜索栏 ---------- */
   .search-wrap {
     position: relative; display: flex; align-items: center;
-    max-width: 260px; width: 100%; margin: 0 8px;
+    max-width: 260px; min-width: 100px; flex: 0 1 240px; margin: 0 8px;
   }
   .search-wrap svg.search-icon {
     position: absolute; left: 9px; width: 14px; height: 14px; color: var(--ink-3); pointer-events: none;
@@ -344,6 +353,55 @@
   mark.kw {
     background: color-mix(in srgb, var(--warn) 35%, transparent);
     color: inherit; border-radius: 2px; padding: 0 1px; font-weight: 500;
+  }
+
+  /* ---------- 股票代码/名称增强标签 ---------- */
+  .stock-link {
+    display: inline;
+    color: var(--accent);
+    font-weight: 500;
+    text-decoration: none;
+    border-bottom: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent);
+    border-radius: 3px;
+    padding: 0 2px;
+    margin: 0 1px;
+    transition: background-color .12s, color .12s, border-color .12s;
+    cursor: pointer;
+  }
+  .stock-link:hover {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-bottom-style: solid;
+    border-color: var(--accent);
+  }
+  .stock-link.stock-tag {
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-family: var(--mono);
+    font-size: .92em;
+    font-weight: 600;
+  }
+  .stock-link.stock-tag:hover {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+  }
+  .stock-bar-link {
+    text-decoration: none;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: color .12s, background-color .12s;
+  }
+  .stock-bar-link:hover {
+    color: var(--accent) !important;
+    text-decoration: underline;
+  }
+  .dense .card:not(.open) .stock-link {
+    border-bottom: none;
+    text-decoration: underline;
+    text-decoration-style: dashed;
+    text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
   }
 
   /* ---------- 上次看到这里（未读断点分界线） ---------- */
