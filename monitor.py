@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-东方财富股吧 + 推特(X) - 指定用户动态实时监控
+谛听 · 抓取 / 解析 / 存储层（无 UI、无线程；被 core.py 调用）
 
 数据源:
   股吧发帖/转发: https://i.eastmoney.com/api/guba/userdynamiclistv2 (type=1)
   股吧评论/回复: https://i.eastmoney.com/api/guba/myreply
+  股吧帖子追加: guba.eastmoney.com/news,{code},{post_id}.html 详情页里的 post_article JSON
   推特发帖:      twitter-cli (twitter user-posts @handle --json)，需 X 账号 cookie
-推送渠道: Server酱(serverchan) 或 PushPlus(pushplus)；桌面版用 Windows 通知
+  微博:          weibo.com/ajax/statuses/mymblog，需登录 Cookie
+另外负责 config.json / state.json 的读写和 messages.db(SQLite) 的存取。
 """
 import json
 import os
@@ -18,7 +20,6 @@ import random
 import shutil
 import subprocess
 import urllib.request
-import urllib.parse
 from datetime import datetime
 
 try:
@@ -52,8 +53,8 @@ def log(msg):
 
 # ---------- 配置 / 状态 ----------
 def load_config():
-    """缺文件抛 FileNotFoundError 而不是直接 sys.exit——这个函数会在 GUI/HTTP 的后台线程里被调，
-    SystemExit 躲得过 `except Exception`，会把线程无声杀掉；命令行版在 main() 里自己兜底退出。"""
+    """缺文件抛 FileNotFoundError 而不是直接 sys.exit——这个函数会在 HTTP/后台线程里被调，
+    SystemExit 躲得过 `except Exception`，会把线程无声杀掉。"""
     if not os.path.exists(CONFIG_PATH):
         raise FileNotFoundError("找不到 config.json，请先按 README 填写配置。")
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -88,8 +89,8 @@ def save_state(state):
 
 
 # ---------- 消息持久化(SQLite) ----------
-# 只存 app.py 渲染用的「成品」字段(标题/来源等已经拼进 content 里了)，方便原样取出来重新显示。
-# 只在主线程用(app.py 只从 _add_item 里写、从启动流程里读)，故意不开 check_same_thread=False。
+# 只存列表渲染用的「成品」字段(标题/来源等已经拼进 content 里了)，方便原样取出来重新显示。
+# 连接不跨线程用(后台线程独占写连接，HTTP 线程各开短连接)，故意不开 check_same_thread=False。
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.execute("""CREATE TABLE IF NOT EXISTS messages (
@@ -109,7 +110,7 @@ def get_db():
 
 
 def save_message(conn, entry):
-    """entry 是 app.py self.items 里那种已经处理好的 dict(key/name/kind/icon/time/bar/content/link)。"""
+    """entry 是 core.items 里那种已经处理好的 dict(key/name/kind/icon/time/bar/content/link)。"""
     conn.execute(
         "INSERT OR IGNORE INTO messages (key, name, kind, icon, time, bar, content, link, saved_at) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -503,148 +504,25 @@ def parse_post_appends(code, post_id):
     return items
 
 
-# ---------- 推送 ----------
-def push_serverchan(key, title, desp):
-    url = "https://sctapi.ftqq.com/%s.send" % key
-    data = urllib.parse.urlencode({"title": title, "desp": desp}).encode("utf-8")
-    req = urllib.request.Request(url, data=data, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        return resp.read().decode("utf-8", "ignore")
-
-
-def push_pushplus(token, title, content):
-    url = "https://www.pushplus.plus/send"
-    body = json.dumps({"token": token, "title": title,
-                       "content": content, "template": "txt"}).encode("utf-8")
-    req = urllib.request.Request(url, data=body,
-                                 headers={"Content-Type": "application/json", "User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        return resp.read().decode("utf-8", "ignore")
-
-
-def send_push(cfg, title, content):
-    push = cfg.get("push") or {}
-    ptype = push.get("type", "serverchan")
-    key = push.get("key", "")
-    if not key or key.startswith("在这里填"):
-        log("⚠ 未配置推送 key，仅打印不推送：\n%s\n%s" % (title, content))
-        return
-    try:
-        if ptype == "pushplus":
-            push_pushplus(key, title, content)
-        else:
-            push_serverchan(key, title, content)
-        log("已推送: %s" % title)
-    except Exception as e:
-        log("推送失败: %s" % e)
-
-
-def build_message(user_name, it):
-    title = "%s %s [%s] %s" % (it["icon"], it["kind"], user_name,
-                               (it["title"] or it["content"])[:22])
-    lines = [
-        "用户：%s" % user_name,
-        "类型：%s" % it["kind"],
-        "时间：%s" % it["time"],
-        "来源：%s" % (it["bar"] or "—"),
-    ]
-    if it["kind"] == "评论" and (it["ctx_user"] or it["ctx_text"]):
-        lines.append("评论于：%s 的帖子《%s》" % (it["ctx_user"] or "?", it["ctx_text"] or ""))
-    if it["kind"] == "转发" and (it["ctx_user"] or it["ctx_text"]):
-        lines.append("转发自：%s 《%s》" % (it["ctx_user"] or "?", it["ctx_text"] or ""))
-    if it["kind"] == "转推" and it["ctx_user"]:
-        lines.append("转推自：@%s" % it["ctx_user"])
-    if it["kind"] == "推文" and (it["ctx_user"] or it["ctx_text"]):
-        lines.append("引用 @%s：%s" % (it["ctx_user"] or "?", it["ctx_text"] or ""))
-    if it["title"]:
-        lines.append("标题：%s" % it["title"])
-    lines.append("")
-    lines.append(it["content"] or "(无正文)")
-    lines.append("")
-    lines.append("原文链接：%s" % it["link"])
-    return title, "\n\n".join(lines)
-
-
-# ---------- 主循环 ----------
-def collect_items(cfg, uid):
-    """按配置抓取发帖和/或评论，合并为统一列表。"""
+# ---------- 抓取入口 ----------
+def collect_items(cfg, uid, errors=None):
+    """按配置抓取发帖和/或评论，合并为统一列表。
+    单边失败不影响另一边：错误文案追加进 errors（调用方给一个 list），没给就只写日志。
+    以前这里把异常全吞掉只写日志，core 那边的 except 永远走不到，抓取失败在界面上无声无息。"""
     items = []
+    errs = errors if errors is not None else []
     if cfg.get("monitor_posts", True):
         try:
             items += parse_posts(uid)
         except Exception as e:
-            log("抓发帖失败 uid=%s: %s" % (uid, e))
+            errs.append("发帖：%s" % e)
         time.sleep(random.uniform(1, 2))
     if cfg.get("monitor_replies", True):
         try:
             items += parse_replies(uid)
         except Exception as e:
-            log("抓评论失败 uid=%s: %s" % (uid, e))
+            errs.append("评论：%s" % e)
+    if errors is None:
+        for m in errs:
+            log("抓取失败 uid=%s %s" % (uid, m))
     return items
-
-
-def check_user(cfg, state, user):
-    uid = str(user["uid"])
-    name = user.get("name") or uid
-    items = collect_items(cfg, uid)
-    if not items:
-        log("用户 %s 没抓到内容（可能被限流或 uid 有误）。" % name)
-        return
-
-    seen = set(state.get(uid, []))
-    first_time = uid not in state
-
-    if first_time:
-        state[uid] = [it["key"] for it in items]
-        log("首次监控 %s：记录 %d 条现有内容作为基线（不推送）。" % (name, len(items)))
-        return
-
-    new_items = [it for it in items if it["key"] not in seen]
-    # 按时间排序，旧的先推
-    new_items.sort(key=lambda x: x["time"])
-    for it in new_items:
-        title, content = build_message(name, it)
-        send_push(cfg, title, content)
-        seen.add(it["key"])
-
-    if new_items:
-        log("用户 %s 发现 %d 条新动态（发帖/评论）。" % (name, len(new_items)))
-
-    merged = [it["key"] for it in items] + list(seen)
-    state[uid] = list(dict.fromkeys(merged))[:500]
-
-
-def main():
-    try:
-        cfg = load_config()
-    except FileNotFoundError as e:
-        log(str(e))
-        sys.exit(1)
-    users = cfg.get("users", [])
-    interval = int(cfg.get("poll_interval_seconds", 60))
-    if not users:
-        log("config.json 里还没有配置要监控的用户。")
-        sys.exit(1)
-
-    what = []
-    if cfg.get("monitor_posts", True):
-        what.append("发帖")
-    if cfg.get("monitor_replies", True):
-        what.append("评论")
-    log("启动监控：%d 个用户，监控[%s]，每 %d 秒一轮。"
-        % (len(users), "+".join(what), interval))
-
-    state = load_state()
-    while True:
-        for u in users:
-            check_user(cfg, state, u)
-            save_state(state)
-            time.sleep(random.uniform(2, 5))
-        time.sleep(interval + random.uniform(0, 10))
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        log("已手动停止。")

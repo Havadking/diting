@@ -23,7 +23,6 @@
 - 列表**按日期分组**、过去日期自动折叠；左栏可按**用户 / 动态类型**筛选
 - **用户配色**（内置 8 个中国传统色）、**静音**（只收进列表、不弹通知）、**查追加**，都在页面里的「设置」抽屉改，立即生效
 - **深色模式**（默认跟随系统）、竖屏窄窗口自适应、标签页标题显示未读数
-- 也可选择**推送到微信**（Server酱 / PushPlus）
 - 纯本地运行；仅需 Python 标准库 +（可选）`winotify`
 
 > ⏱ 「准实时」轮询：每隔一段时间抓一次，发现新内容就提醒，延迟约等于轮询间隔。
@@ -39,14 +38,7 @@
    其中 **`5591057086910116` 就是这个用户的 UID**。
 3. 把每个要监控用户的 UID 记下来。
 
-### 2.（仅微信推送版需要）申请推送 Key
-
-> 用桌面应用版可**跳过这步**。只有想推到微信时才需要。
-
-- **Server酱**：打开 https://sct.ftqq.com 微信扫码登录，复制 SendKey（形如 `SCT123…`），按提示关注公众号。
-- **PushPlus**：打开 https://www.pushplus.plus 微信登录，复制 token。
-
-### 3. 填写配置文件 `config.json`
+### 2. 填写配置文件 `config.json`
 
 > 首次使用：把仓库里的 `config.example.json` **复制一份改名为 `config.json`**，再按下面修改。
 > （`config.json` 含密钥/隐私，已被 git 忽略、不会进版本库。）
@@ -56,10 +48,6 @@
   "poll_interval_seconds": 60,
   "monitor_posts": true,
   "monitor_replies": true,
-  "push": {
-    "type": "serverchan",
-    "key": "把你的 SendKey 或 token 粘到这里"
-  },
   "users": [
     { "uid": "5591057086910116", "name": "张三" },
     { "uid": "1234567890123456", "name": "李四" }
@@ -71,9 +59,7 @@
 - `monitor_posts`：是否监控**发帖/文章/转发**（`true` 开 / `false` 关）。
 - `monitor_replies`：是否监控**评论/回复**（`true` 开 / `false` 关）。
   > 评论很活跃的大V（比如直播贴里一直刷评论）会推得很频繁，嫌吵可以把这项设为 `false`。
-- `push.type`：用 Server酱 填 `"serverchan"`；用 PushPlus 填 `"pushplus"`。
-- `push.key`：上一步拿到的 SendKey 或 token。
-- `users`：要监控的人，`uid` 必填，`name` 是你自己起的备注名（推送里会显示）。
+- `users`：要监控的人，`uid` 必填，`name` 是你自己起的备注名（通知和列表里会显示）。
 
 ### 用户分组 & 配色
 
@@ -145,8 +131,6 @@
 
 ## 二、运行
 
-### 方式 A：网页版（推荐 ⭐ 无额度限制）
-
 双击 **`run_gui.bat`**（等价于 `python server.py`），会在本机 `127.0.0.1:17777` 起一个小服务并自动用默认浏览器打开页面，打开即自动开始监控：
 - 有新发帖/评论会弹 **Windows 系统通知**，并出现在页面列表最下面（不在底部时会出「↓ N 条新动态」按钮）；
 - **点卡片**展开全文，里面有「打开原帖」；
@@ -158,26 +142,12 @@
 > 没装也能用，只是不弹系统通知、只在页面里显示。
 
 > **每次启动**：会先把之前保存过的消息（`messages.db`）加载进列表，同时后台开始检查有没有新动态；
-> 全新用户第一次抓到内容也会先加载进列表但**不弹通知**（避免一上来刷屏），之后**新产生**的发帖/评论才会弹通知。
+> 全新用户第一次抓到内容会先加载进列表但**不弹通知**（避免一上来刷屏）；已经监控过的用户，程序关着那段时间里发的动态会在启动后**补弹通知**（只补最近 24 小时内的，同一人超过 8 条会合并成一条）。
+> 某个用户连续抓取失败时，侧栏用户名旁会出现**红点**（鼠标悬停看原因），顶栏的绿点也会变成琥珀色；详细记录在 `monitor.log`。
 
 > 想离线看看界面长什么样：`python server.py --mock`，用示例数据跑、不读配置不联网。
 
-<details>
-<summary>旧版 tkinter 桌面窗口（`run_gui_tk.bat`）</summary>
-
-网页版之前的原生窗口版本还保留着，双击 `run_gui_tk.bat`（或 `python app.py`）即可，功能和通知逻辑与网页版共用同一套核心。
-想要 Windows 11 风格圆角界面可选装 `pip install sv_ttk`。网页版稳定后这个版本会移除。
-</details>
-
 **让通知正常弹出**：Windows「设置 → 系统 → 通知」要打开，且**关闭「专注助手 / 勿扰模式」**，否则通知会被系统拦下。
-
-### 方式 B：推送到微信（可选，有每日额度限制）
-
-如果想推到手机微信，用 Server酱：先在 `config.json` 的 `push.key` 填入 SendKey，再运行：
-```
-python monitor.py        # 或双击 run.bat
-```
-> 注意：Server酱免费版每天仅 5 条，监控活跃用户会很快用完，推荐用方式 A。
 
 ### 先测试抓取是否正常
 ```
@@ -197,7 +167,7 @@ python test_once.py
   - 发帖/转发：`i.eastmoney.com/api/guba/userdynamiclistv2?uid=用户ID&pagenum=1&pagesize=20&type=1`
   - 评论：`i.eastmoney.com/api/guba/myreply?uid=用户ID&pageindex=1`
   - 推特：`twitter user-posts @handle --json`（twitter-cli）
-- **状态文件 `state.json`**：记录已经推送过的帖子 ID，用于去重，别手动删（删了会把现有帖子重新当基线）。
+- **状态文件 `state.json`**：记录已经见过的帖子 ID，用于去重，别手动删（删了会把现有帖子重新当基线）。
 - **日志 `monitor.log`**：运行记录，排查问题时可以看。
 
 ---
@@ -209,17 +179,15 @@ python test_once.py
 | `config.json` | 你的配置（用户、间隔、是否监控评论）——**主要改这个** |
 | `server.py` | **网页版入口**：本机 HTTP 服务 + 浏览器页面，推荐 |
 | `run_gui.bat` | 双击启动网页版 |
-| `core.py` | 监控核心：轮询、去重、通知、写库（网页版和旧窗口版共用） |
+| `core.py` | 监控核心：轮询、去重、通知、写库 |
 | `web/` | 网页版前端（React + htm，全部本地文件、零构建） |
 | `mock_data.py` | `server.py --mock` 用的示例数据 |
-| `app.py` / `run_gui_tk.bat` | 旧版 tkinter 桌面窗口，暂时保留 |
-| `monitor.py` | 抓取/解析函数 + 微信推送版命令行程序 |
+| `monitor.py` | 抓取/解析函数 + 配置/状态/数据库读写 |
 | `test_once.py` | 抓取测试，跑一次看结果 |
-| `run.bat` | 双击启动命令行（微信推送）版 |
 | `config.example.json` | 配置模板，复制成 `config.json` 用 |
 | `state.json` | 自动生成，去重用，别手动删 |
 | `messages.db` | 自动生成，收到的所有消息永久保存在这（SQLite），程序重启也不丢 |
-| `monitor.log` / `gui_error.log` | 自动生成，运行/报错日志 |
+| `monitor.log` | 自动生成，启停 / 抓取失败与恢复 / 补发通知的记录 |
 
 > `config.json`（含密钥/监控名单）、`state.json`、`messages.db` 已被 `.gitignore` 忽略，不会进版本库。
 
@@ -230,7 +198,6 @@ python test_once.py
 - Windows + **Python 3.9+**
 - 桌面通知：`pip install winotify`（不装也能用，只是不弹系统通知，仅在页面里显示）
 - 浏览器：随便哪个现代浏览器（Chrome / Edge / Firefox），页面不需要外网
-- （可选，仅旧窗口版）界面皮肤：`pip install sv_ttk`
 - （可选）推特功能：`pipx install twitter-cli`，并配置 X 账号 Cookie（见上文「监控推特」）
 
 ```bash

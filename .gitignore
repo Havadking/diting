@@ -10,16 +10,13 @@
 !/CLAUDE.md
 !/LICENSE
 !/requirements.txt
-!/app.py
 !/core.py
 !/server.py
 !/mock_data.py
 !/web/
 !/monitor.py
 !/test_once.py
-!/run.bat
 !/run_gui.bat
-!/run_gui_tk.bat
 !/config.example.json
 !/docs/
 !/docs/screenshot.png

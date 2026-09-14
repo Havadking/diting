@@ -114,9 +114,6 @@ class MockCore(core.MonitorCore):
         self.color_map = {u["name"]: u["color"] for u in USERS if u.get("color")}
         self.muted = {u["name"] for u in USERS if u.get("mute")}
 
-    def describe_config(self):
-        return "演示数据 %d 人 · 间隔 %ds" % (len(USERS), self.interval)
-
     def poll_config(self):
         return {"poll_interval_seconds": self.interval, "append_check_interval_seconds": 300}
 

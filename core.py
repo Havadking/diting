@@ -2,15 +2,14 @@
 """
 谛听 · 监控核心（无任何 UI 依赖）
 
-从 app.py 的 MonitorApp 抽出来的后台抓取线程 + 数据模型：
+后台抓取线程 + 数据模型：
   - 轮询股吧 / 推特 / 微博，按来源做首轮基线与去重
   - 帖子追加监视（含失败退避）
-  - 静音 / 合并阈值 / Windows 通知
+  - 静音 / 合并阈值 / Windows 通知 / 抓取健康度
   - 把处理好的展示条目写进 messages.db，并广播给所有订阅者
 
-tkinter 版 (app.py) 和网页版 (server.py) 都只是它的一层壳：订阅一个事件队列，
-拿到 ("history"|"new"|"status"|"cleared", payload) 后自己决定怎么渲染。
-本文件里**不能** import tkinter。
+网页版 (server.py) 只是它的一层壳：订阅一个事件队列，
+拿到 ("history"|"new"|"status"|"config"|"cleared", payload) 后自己决定怎么渲染。
 """
 import queue
 import random
@@ -36,24 +35,6 @@ SUB_QUEUE_SIZE = 200  # 订阅者队列上限，满了丢最旧的，别让挂�
 # 推特/微博监控功能暂时下线（不抓取、UI 也不显示相关内容），代码保留，改回 True 即可恢复
 ENABLE_TWITTER = False
 ENABLE_WEIBO = False
-
-# 按「类型」区分的浅色行底色（与文字色同色系但很淡，用户自定义配色只管文字，不影响这层）
-KIND_BG = {
-    "发帖": "#e4f5ec",
-    "评论": "#e9eefb",
-    "转发": "#fdf1e2",
-    "转推": "#fdf1e2",
-    "推文": "#f3ecfb",
-    "追加": "#f6ece0",
-}
-
-# 自定义可选颜色：取自「中国传统色」，色相分明且白底上当文字清晰可读
-PALETTE = [
-    ("朱红", "#ED5126"), ("橘橙", "#F97D1C"), ("土黄", "#D6A01D"),
-    ("竹绿", "#1BA784"), ("翠蓝", "#1E9EB3"), ("群青", "#1772B4"),
-    ("青莲", "#8B2671"), ("品红", "#EF3473"),
-]
-
 
 def toast(title, msg, link=None):
     if not HAS_TOAST:
@@ -300,25 +281,6 @@ class MonitorCore:
             self.item_keys.clear()
         self._broadcast("cleared", {})
 
-    def describe_config(self):
-        """状态栏那句「股吧 N 人(发帖+评论) · 间隔 60s」。读配置失败抛异常，由壳层兜底。"""
-        cfg = monitor.load_config()
-        n = len(cfg.get("users", []))
-        tw = len(cfg.get("twitter_users", []))
-        wb = len(cfg.get("weibo_users", []))
-        what = []
-        if cfg.get("monitor_posts", True):
-            what.append("发帖")
-        if cfg.get("monitor_replies", True):
-            what.append("评论")
-        txt = "股吧 %d 人(%s) · 间隔 %ds" % (n, "+".join(what),
-                                          cfg.get("poll_interval_seconds", 60))
-        if ENABLE_TWITTER and tw:
-            txt += "   推特 %d 人 · %ds" % (tw, cfg.get("twitter_poll_interval_seconds", 180))
-        if ENABLE_WEIBO and wb:
-            txt += "   微博 %d 人 · %ds" % (wb, cfg.get("weibo_poll_interval_seconds", 120))
-        return txt
-
     def save_users(self, patch):
         """写回用户设置（配色 / 静音 / 查追加）。patch 是 [{name, color, mute, check_appends}]。
         只改请求里出现且当前启用来源里存在的用户，其它用户、其它顶层键（weibo_cookie 等）原样保留；
@@ -519,7 +481,7 @@ class MonitorCore:
         - state.json 里从没见过这个来源（新加的用户 / state 丢了）：全部当基线入列、不提示；
         - state.json 里有它的基线：不在基线里的就是上次运行之后发的，照常通知（发布超过
           RESTART_NOTIFY_WINDOW 的降级为静默入列）。以前这里一律静默，重启那几分钟里发的帖
-          就无声进库了，和命令行版 check_user() 的语义也不一致。
+          就无声进库了，
         之后的每一轮只提示新增。"""
         seen = set(state.get(skey, []))
         had_baseline = skey in state
@@ -569,13 +531,18 @@ class MonitorCore:
                         break
                     uid = str(u["uid"])
                     name = u.get("name") or uid
+                    errors = []
                     try:
-                        items = monitor.collect_items(cfg, uid)
+                        items = monitor.collect_items(cfg, uid, errors)
                     except Exception as e:
-                        self._mark_fail(uid, name, e)
-                        self.set_status("抓取 %s 失败：%s" % (name, e))
-                        continue
-                    self._mark_ok(uid, name)
+                        errors.append(str(e))
+                        items = []
+                    if errors:
+                        # 发帖/评论只要有一边失败就算失败（另一边抓到的照常入列），否则接口改了一半看不出来
+                        self._mark_fail(uid, name, "；".join(errors))
+                        self.set_status("抓取 %s 失败：%s" % (name, errors[0]))
+                    else:
+                        self._mark_ok(uid, name)
                     if items:
                         self._emit(state, uid, name, items, db)
                         if u.get("check_appends"):
