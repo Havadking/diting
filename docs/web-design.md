@@ -114,8 +114,8 @@ class MonitorCore:
 |---|---|---|---|
 | GET | `/` | — | `web/index.html` |
 | GET | `/assets/<path>` | — | `web/` 下静态文件（拒绝 `..`） |
-| GET | `/api/snapshot` | — | `{items, status:{text,running,last_check}, users:[{name,uid,color,mute,check_appends}], config:{poll_interval_seconds, append_check_interval_seconds}, db_count}` |
-| GET | `/api/items?before=<time>&limit=200` | — | 从 `messages.db` 翻更早的历史（「加载更早」用，见 §8.3） |
+| GET | `/api/snapshot?limit=300` | — | `{items（内存里最近 limit 条）, has_more, status:{text,running,last_check}, users:[{name,uid,source,color,mute,check_appends}], config:{poll_interval_seconds, append_check_interval_seconds}}` |
+| GET | `/api/items?before=<time>&before_key=<key>&limit=200` | — | 从 `messages.db` 翻更早的历史（「加载更早」用，见 §8.3）；游标是 `(time, key)` 二元组，同一秒多条时不重不漏 |
 | GET | `/api/events` | — | SSE，`event: <type>\ndata: <json>\n\n`；连上先发一条 `status`；每 25 s 发 `: ping` 保活 |
 | POST | `/api/control` | `{"action":"start"\|"stop"\|"clear"\|"test_toast"\|"quit"}` | `{"ok":true}`；`quit` 回复后 0.5 s 调 `os._exit(0)` |
 | POST | `/api/users` | `{"users":[{name,color,mute,check_appends}]}` | `{"ok":true}`；只写回请求里出现的用户，沿用现在"不遍历没渲染出来的用户"的规则（推特/微博下线期间不能被误清空） |
@@ -232,7 +232,7 @@ App
 | 3 | `web/` 骨架：vendor 落地、Feed 只读渲染、接 snapshot + SSE | ✅ | `547b494` |
 | 4 | 交互：筛选、日期折叠、卡片展开、新动态角标、跟随滚动、标题未读数 | ✅ | `3efd270` |
 | 5 | 设置抽屉 + `/api/users` + `/api/control`（启停/清空/测试通知/退出） | ✅ | `d104437` |
-| 6 | 收尾：深色模式、竖屏适配、加载更早、断线横幅、启动脚本、文档 | ⬜ | |
+| 6 | 收尾：深色模式、竖屏适配、加载更早、断线横幅、启动脚本、文档 | ✅ | 见 git log |
 | 7 | 稳定运行 ≥ 1 周后删 `app.py` | ⬜ | |
 
 ### 阶段 1 — `core.py`（预计 1 次会话，改动最大也最危险）

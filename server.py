@@ -291,4 +291,16 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception:
+        # run_gui.bat 用 pythonw 启动，没有控制台，崩了什么都看不见——落个日志
+        import traceback
+        try:
+            with open(os.path.join(BASE_DIR, "server_error.log"), "w", encoding="utf-8") as f:
+                f.write(traceback.format_exc())
+        except Exception:
+            pass
+        raise

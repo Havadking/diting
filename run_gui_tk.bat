@@ -1,4 +1,4 @@
 @echo off
 chcp 65001 >nul
 cd /d "%~dp0"
-start "" pythonw server.py
+start "" pythonw app.py
