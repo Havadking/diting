@@ -78,6 +78,10 @@ class MonitorCore:
         self.muted = set()        # 被静音(只收不提示)的用户名
         self.status_text = "未启动"
         self.last_check = ""      # 上次轮询结束时刻 HH:MM:SS
+        # 每个来源的抓取健康度：uid -> {"last_ok","last_error","fail_streak","append_error"}。
+        # 后台线程写、HTTP 线程经 _status_payload 读，都拿 self.lock。
+        # 之前失败只闪一下状态栏、下一轮就被"运行中"盖掉，某个用户连续几天抓不到根本看不出来。
+        self.health = {}
         self._subs = []           # 订阅者队列
         self._subs_lock = threading.Lock()
         self._last_tw = 0.0       # 上次抓推特的时间戳
@@ -123,7 +127,46 @@ class MonitorCore:
                     pass
 
     def _status_payload(self):
-        return {"text": self.status_text, "running": self.running, "last_check": self.last_check}
+        with self.lock:
+            health = {k: dict(v) for k, v in self.health.items()}
+        return {"text": self.status_text, "running": self.running,
+                "last_check": self.last_check, "health": health}
+
+    # ---------- 抓取健康度 ----------
+    def _health_of(self, uid):
+        return self.health.setdefault(str(uid), {"last_ok": "", "last_error": None,
+                                                 "fail_streak": 0, "append_error": None})
+
+    def _mark_ok(self, uid, name):
+        with self.lock:
+            h = self._health_of(uid)
+            streak = h["fail_streak"]
+            h["last_ok"] = datetime.now().strftime("%H:%M:%S")
+            h["last_error"] = None
+            h["fail_streak"] = 0
+        if streak:
+            monitor.log("抓取 %s 恢复正常（此前连续失败 %d 次）" % (name, streak))
+
+    def _mark_fail(self, uid, name, err):
+        msg = str(err)[:120] or err.__class__.__name__
+        with self.lock:
+            h = self._health_of(uid)
+            h["last_error"] = "%s %s" % (datetime.now().strftime("%H:%M:%S"), msg)
+            h["fail_streak"] += 1
+            streak = h["fail_streak"]
+        monitor.log("抓取 %s 失败（连续第 %d 次）：%s" % (name, streak, msg))
+
+    def _mark_append(self, uid, name, err):
+        """查追加的失败单独记，不算进 fail_streak——它多半是详情页触发了整站验证，和该用户本身无关。"""
+        msg = None if err is None else "%s %s" % (datetime.now().strftime("%H:%M:%S"), str(err)[:120])
+        with self.lock:
+            self._health_of(uid)["append_error"] = msg
+        if msg:
+            monitor.log("查追加 %s 失败：%s" % (name, str(err)[:120]))
+
+    def _failing_count(self):
+        with self.lock:
+            return sum(1 for h in self.health.values() if h["fail_streak"] > 0)
 
     def set_status(self, text):
         self.status_text = text
@@ -229,7 +272,10 @@ class MonitorCore:
         self._last_append_check = 0.0
         self._append_fail_streak = 0
         self._append_watch = {}
+        with self.lock:
+            self.health = {}
         self.stop_event = threading.Event()   # 给新线程一个全新的停止信号
+        monitor.log("监控启动")
         my_stop = self.stop_event
         self.set_status("正在启动…首次抓取会先加载现有内容（不弹通知），过去的日期默认折叠。")
         self.worker = threading.Thread(target=self._run_loop, args=(my_stop,), daemon=True)
@@ -239,6 +285,7 @@ class MonitorCore:
     def stop(self):
         self.running = False
         self.stop_event.set()
+        monitor.log("监控停止")
         self.set_status("已停止。")
 
     def test_toast(self):
@@ -493,6 +540,7 @@ class MonitorCore:
                     cfg = monitor.load_config()
                 except Exception as e:
                     self.set_status("读取配置失败：%s" % e)
+                    monitor.log("读取配置失败：%s" % e)
                     stop_event.wait(5)
                     continue
                 interval = int(cfg.get("poll_interval_seconds", 60))
@@ -506,8 +554,10 @@ class MonitorCore:
                     try:
                         items = monitor.collect_items(cfg, uid)
                     except Exception as e:
+                        self._mark_fail(uid, name, e)
                         self.set_status("抓取 %s 失败：%s" % (name, e))
                         continue
+                    self._mark_ok(uid, name)
                     if items:
                         self._emit(state, uid, name, items, db)
                         if u.get("check_appends"):
@@ -529,8 +579,10 @@ class MonitorCore:
                         try:
                             items = monitor.parse_tweets(handle)
                         except Exception as e:
+                            self._mark_fail(handle, name, e)
                             self.set_status("抓推特 %s 失败：%s" % (name, str(e)[:80]))
                             continue
+                        self._mark_ok(handle, name)
                         if items:
                             self._emit(state, "tw:" + handle, name, items, db)
                         stop_event.wait(random.uniform(2, 4))
@@ -551,8 +603,10 @@ class MonitorCore:
                         try:
                             items = monitor.parse_weibo(uid, wb_cookie)
                         except Exception as e:
+                            self._mark_fail(uid, name, e)
                             self.set_status("抓微博 %s 失败：%s" % (name, str(e)[:80]))
                             continue
+                        self._mark_ok(uid, name)
                         if items:
                             self._emit(state, "wb:" + uid, name, items, db)
                         stop_event.wait(random.uniform(2, 4))
@@ -568,7 +622,11 @@ class MonitorCore:
                 monitor.save_state(state)
                 self.first_cycle = False
                 self.last_check = datetime.now().strftime("%H:%M:%S")
-                self.set_status("上次检查 %s · 运行中" % self.last_check)
+                failing = self._failing_count()
+                if failing:
+                    self.set_status("上次检查 %s · %d 个用户抓取失败，看侧栏红点" % (self.last_check, failing))
+                else:
+                    self.set_status("上次检查 %s · 运行中" % self.last_check)
                 waited = 0.0
                 while waited < interval and not stop_event.is_set():
                     stop_event.wait(1)
@@ -620,8 +678,10 @@ class MonitorCore:
                 items = monitor.parse_post_appends(w["code"], post_id)
             except Exception as e:
                 had_failure = True
+                self._mark_append(w["uid"], w["name"], e)
                 self.set_status("查追加 %s 失败：%s" % (w["name"], str(e)[:80]))
                 continue
+            self._mark_append(w["uid"], w["name"], None)
             if items:
                 self._emit(state, "ap:" + post_id, w["name"], items, db)
                 w["expires_at"] = time.time() + 86400

@@ -100,6 +100,14 @@ class MockCore(core.MonitorCore):
         self.last_check = ""
         self.interval = interval
         self._seq = 0
+        # 演示"抓取失败可见"：让最后一个用户处于连续失败状态，第一个用户查追加失败
+        self.health = {
+            USERS[-1]["uid"]: {"last_ok": "09:31:04", "fail_streak": 3,
+                               "last_error": "09:47:10 <urlopen error [WinError 10060] 连接超时>",
+                               "append_error": None},
+            USERS[0]["uid"]: {"last_ok": "09:47:12", "fail_streak": 0, "last_error": None,
+                              "append_error": "09:40:33 东财触发了人机验证页，稍后自动重试"},
+        }
         self.refresh_config_maps()
 
     def refresh_config_maps(self):

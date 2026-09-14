@@ -908,6 +908,18 @@
     const stockRegex = useMemo(() => buildStockRegex(stockDict), [stockDict]);
 
     const st = s.status;
+    const health = st.health || {};
+    // 抓取健康度：连续失败的用户在侧栏标红点，顶栏的绿点也变琥珀色，不然失败只在状态栏闪一下就被盖掉
+    const failing = s.users.filter(u => (health[String(u.uid)] || {}).fail_streak > 0).length;
+    const healthTip = u => {
+      const h = health[String(u.uid)];
+      if (!h) return "";
+      const parts = [];
+      if (h.fail_streak > 0) parts.push("连续失败 " + h.fail_streak + " 次：" + (h.last_error || ""));
+      if (h.append_error) parts.push("查追加失败：" + h.append_error);
+      if (h.last_ok) parts.push("上次成功 " + h.last_ok);
+      return parts.length ? "\n" + parts.join("\n") : "";
+    };
     return html`
       <div class=${"app" + (rail ? " rail" : "") + (dense ? " dense" : "")}>
         <header class="topbar">
@@ -915,8 +927,8 @@
             <button class="iconbtn" title=${rail ? "展开侧栏" : "收起侧栏"} onClick=${() => setRail(r => !r)}>${I.menu}</button>
             <span class="brand-mark">谛听</span>
           </div>
-          <div class="status" title=${st.text}>
-            <span class=${"dot" + (st.running && s.connected ? "" : " paused")}/>
+          <div class="status" title=${st.text + (failing ? "\n" + failing + " 个用户抓取失败，看侧栏红点" : "")}>
+            <span class=${"dot" + (st.running && s.connected ? (failing ? " warn" : "") : " paused")}/>
             <span class="lbl">
               <span class="lbl-main">${!s.connected ? "已断开" : st.running ? "运行中" : "已停止"}</span>
               ${st.last_check && html`<span class="lbl-sub"> · 上次检查</span>`}
@@ -979,13 +991,16 @@
                 <span class="nm"><span>全部</span></span>
                 <span class="cnt">${todayCount.all}</span>
               </button>
-              ${s.users.map(u => html`
-                <button key=${u.uid + u.name} class=${"urow" + (filter.user === u.name ? " on" : "")}
-                        title=${u.name + "（今日 " + (todayCount.m[u.name] || 0) + " 条）"} onClick=${() => setUser(u.name)}>
+              ${s.users.map(u => {
+                const h = health[String(u.uid)] || {};
+                const bad = h.fail_streak > 0;
+                return html`
+                <button key=${u.uid + u.name} class=${"urow" + (filter.user === u.name ? " on" : "") + (bad ? " err" : "")}
+                        title=${u.name + "（今日 " + (todayCount.m[u.name] || 0) + " 条）" + healthTip(u)} onClick=${() => setUser(u.name)}>
                   <span class="sw" style=${{ background: u.color || "var(--line-strong)" }}/>
-                  <span class="nm"><span>${u.name}</span>${u.mute && I.mute}${u.check_appends && html`<span class="tag-mini">追加</span>`}</span>
+                  <span class="nm"><span>${u.name}</span>${u.mute && I.mute}${u.check_appends && html`<span class="tag-mini">追加</span>`}${bad && html`<span class="errdot" aria-label="抓取失败"/>`}${!bad && h.append_error && html`<span class="errdot soft" aria-label="查追加失败"/>`}</span>
                   <span class="cnt">${todayCount.m[u.name] || 0}</span>
-                </button>`)}
+                </button>`; })}
             </div>
           </div>
           <div class="divider"/>
