@@ -79,8 +79,12 @@ def load_state():
 
 
 def save_state(state):
-    with open(STATE_PATH, "w", encoding="utf-8") as f:
+    """和 save_config 一样先写临时文件再替换：state.json 每轮都写，写一半掉电会把它弄坏，
+    load_state 遇到坏文件会当成空表，所有来源就都要重做基线（上次运行之后的动态就漏通知了）。"""
+    tmp = STATE_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, STATE_PATH)
 
 
 # ---------- 消息持久化(SQLite) ----------

@@ -85,7 +85,7 @@ key, kind, icon, time, title, content, bar, ctx_user, ctx_text, link
 
 `state.json` 记录每个来源已见过的 `key`（每来源保留最近 500 条）。skey 命名：股吧用裸 uid，推特 `tw:<handle>`，微博 `wb:<uid>`。
 
-`core.py` 的 `_emit()` 实现关键语义：**每个来源第一次抓取成功**时，把结果当基线塞进列表但**不弹通知**（避免启动刷屏），之后才提示新增。按来源分别 seed（`self._seeded`）是有意为之——历史上曾因全局单一 seed 标志，导致某个来源开机时抓取失败就永远不显示（见 commit 7a3d470）。
+`core.py` 的 `_emit()` 实现关键语义：本进程内**每个来源第一次抓取成功**时分两种情况——`state.json` 里从没见过这个来源（新加的用户、state 丢了/损坏）就把结果当基线塞进列表但**不弹通知**（避免启动刷屏）；`state.json` 里已有它的基线，则不在基线里的条目就是上次运行之后发的，**照常通知**（发布时间早于 `RESTART_NOTIFY_WINDOW`＝24 小时的降级为静默入列；一轮超过 `MERGE_LIMIT` 条会像平时一样合并成一条 toast）。之后的每一轮只提示新增。按来源分别 seed（`self._seeded`）是有意为之——历史上曾因全局单一 seed 标志，导致某个来源开机时抓取失败就永远不显示（见 commit 7a3d470）。`state.json` 和 `config.json` 都是先写 `.tmp` 再 `os.replace`，别改回直接覆盖写。
 
 注意 `monitor.py` 的 `check_user()` 有一套**独立实现**的相同语义（用 `uid not in state` 判首次），两者共享同一个 `state.json`。
 

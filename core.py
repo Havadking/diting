@@ -16,7 +16,7 @@ import queue
 import random
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import monitor
 
@@ -29,6 +29,8 @@ except Exception:
 APP_ID = "谛听"
 MAX_ROWS = 1000
 MERGE_LIMIT = 8  # 一轮内同一用户新增超过这么多条才合并通知，否则逐条弹
+# 重启后第一轮：上次运行之后发布、且不早于这么久的动态照常通知（超过的静默入列，避免久未开机时刷屏）
+RESTART_NOTIFY_WINDOW = 24 * 3600
 SUB_QUEUE_SIZE = 200  # 订阅者队列上限，满了丢最旧的，别让挂死的消费者拖住后台线程
 
 # 推特/微博监控功能暂时下线（不抓取、UI 也不显示相关内容），代码保留，改回 True 即可恢复
@@ -277,7 +279,7 @@ class MonitorCore:
         self.stop_event = threading.Event()   # 给新线程一个全新的停止信号
         monitor.log("监控启动")
         my_stop = self.stop_event
-        self.set_status("正在启动…首次抓取会先加载现有内容（不弹通知），过去的日期默认折叠。")
+        self.set_status("正在启动…首次抓取先加载现有内容，只对上次运行之后的新动态提示。")
         self.worker = threading.Thread(target=self._run_loop, args=(my_stop,), daemon=True)
         self.worker.start()
         return None
@@ -511,18 +513,34 @@ class MonitorCore:
 
     # ---------- 后台线程 ----------
     def _emit(self, state, skey, name, items, db):
-        """对一个来源的抓取结果做去重。该来源**第一次抓成功**时入历史(不提示)，
-        之后才弹新动态。按来源分别处理，避免某来源开机时抓取失败就永远不显示。"""
+        """对一个来源的抓取结果做去重。按来源分别处理，避免某来源开机时抓取失败就永远不显示。
+
+        本进程内该来源**第一次抓成功**时分两种情况：
+        - state.json 里从没见过这个来源（新加的用户 / state 丢了）：全部当基线入列、不提示；
+        - state.json 里有它的基线：不在基线里的就是上次运行之后发的，照常通知（发布超过
+          RESTART_NOTIFY_WINDOW 的降级为静默入列）。以前这里一律静默，重启那几分钟里发的帖
+          就无声进库了，和命令行版 check_user() 的语义也不一致。
+        之后的每一轮只提示新增。"""
         seen = set(state.get(skey, []))
+        had_baseline = skey in state
         new_items = [it for it in items if it["key"] not in seen]
         state[skey] = list(dict.fromkeys([it["key"] for it in items] + list(seen)))[:500]
         if skey not in self._seeded:
             self._seeded.add(skey)
-            entries = [self._add_item(name, it, db)
-                       for it in sorted(items, key=lambda x: x["time"])[-10:]]
+            notify = []
+            if had_baseline:
+                cutoff = (datetime.now() - timedelta(seconds=RESTART_NOTIFY_WINDOW)).strftime("%Y-%m-%d %H:%M:%S")
+                notify = [it for it in new_items if it["time"] >= cutoff]
+            notify_keys = {it["key"] for it in notify}
+            silent = [it for it in sorted(items, key=lambda x: x["time"]) if it["key"] not in notify_keys]
+            entries = [self._add_item(name, it, db) for it in silent[-10:]]
             entries = [e for e in entries if e]
             if entries:
                 self._broadcast("history", entries)
+            if notify:
+                monitor.log("%s 上次运行之后有 %d 条新动态，补发通知" % (name, len(notify)))
+                notify.sort(key=lambda x: x["time"])
+                self._handle_new(name, notify, db)
         elif new_items:
             new_items.sort(key=lambda x: x["time"])
             self._handle_new(name, new_items, db)
