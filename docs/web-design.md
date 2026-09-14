@@ -34,6 +34,7 @@ python server.py
 ```
 core.py            MonitorCore（新）
 server.py          HTTP 服务 + 主入口（新）
+mock_data.py       --mock 用的示例数据 + MockCore（新）
 web/
   index.html       壳子：加载 vendor 脚本 + app.js
   app.css          全部样式（设计 token 见 §7）
@@ -226,7 +227,7 @@ App
 |---|---|---|---|
 | 0 | 设计文档 + 视觉稿 | ✅ | `003002f` |
 | 1 | `core.py`：抽离无 UI 的 `MonitorCore`，`app.py` 改为消费它 | ✅ | `4e44137` |
-| 2 | `server.py` 最小版：静态文件 + `/api/snapshot` + `/api/events` + `--mock` | ⬜ | |
+| 2 | `server.py` 最小版：静态文件 + `/api/snapshot` + `/api/events` + `--mock` | ✅ | 见 git log |
 | 3 | `web/` 骨架：vendor 落地、Feed 只读渲染、接 snapshot + SSE | ⬜ | |
 | 4 | 交互：筛选、日期折叠、卡片展开、新动态角标、跟随滚动、标题未读数 | ⬜ | |
 | 5 | 设置抽屉 + `/api/users` + `/api/control`（启停/清空/测试通知/退出） | ⬜ | |

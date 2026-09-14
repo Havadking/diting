@@ -132,7 +132,8 @@ class MonitorCore:
     def snapshot(self):
         with self.lock:
             items = list(self.items)
-        return {"items": items, "status": self._status_payload()}
+        return {"items": items, "status": self._status_payload(),
+                "users": self.list_users(), "config": self.poll_config()}
 
     # ---------- 历史 ----------
     def _load_history_from_db(self):
@@ -219,6 +220,43 @@ class MonitorCore:
         if ENABLE_WEIBO and wb:
             txt += "   微博 %d 人 · %ds" % (wb, cfg.get("weibo_poll_interval_seconds", 120))
         return txt
+
+    def poll_config(self):
+        """前端要展示的轮询参数。读配置失败给默认值。"""
+        try:
+            cfg = monitor.load_config()
+        except Exception:
+            cfg = {}
+        return {
+            "poll_interval_seconds": cfg.get("poll_interval_seconds", 60),
+            "append_check_interval_seconds": cfg.get("append_check_interval_seconds", 300),
+        }
+
+    def list_users(self):
+        """给前端侧栏/设置抽屉用的用户列表。只列当前启用的来源——推特/微博下线期间不能泄漏出去，
+        否则保存设置时会把它们没显示出来的配置误清空（见 CLAUDE.md）。读配置失败返回空表。"""
+        try:
+            cfg = monitor.load_config()
+        except Exception:
+            return []
+        groups = cfg.get("groups", {}) or {}
+        out = []
+        sources = [("guba", cfg.get("users", []) or [])]
+        if ENABLE_TWITTER:
+            sources.append(("twitter", cfg.get("twitter_users", []) or []))
+        if ENABLE_WEIBO:
+            sources.append(("weibo", cfg.get("weibo_users", []) or []))
+        for src, users in sources:
+            for u in users:
+                name = u.get("name") or u.get("uid") or u.get("handle")
+                if not name:
+                    continue
+                color = u.get("color") or (groups.get(u.get("group")) if u.get("group") else None)
+                out.append({"name": name, "uid": str(u.get("uid") or u.get("handle") or ""),
+                            "source": src, "color": color,
+                            "mute": bool(u.get("mute")),
+                            "check_appends": bool(u.get("check_appends")) if src == "guba" else None})
+        return out
 
     # ---------- 配置映射 ----------
     def refresh_config_maps(self):

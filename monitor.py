@@ -52,9 +52,10 @@ def log(msg):
 
 # ---------- 配置 / 状态 ----------
 def load_config():
+    """缺文件抛 FileNotFoundError 而不是直接 sys.exit——这个函数会在 GUI/HTTP 的后台线程里被调，
+    SystemExit 躲得过 `except Exception`，会把线程无声杀掉；命令行版在 main() 里自己兜底退出。"""
     if not os.path.exists(CONFIG_PATH):
-        log("找不到 config.json，请先按 README 填写配置。")
-        sys.exit(1)
+        raise FileNotFoundError("找不到 config.json，请先按 README 填写配置。")
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
 
@@ -545,7 +546,11 @@ def check_user(cfg, state, user):
 
 
 def main():
-    cfg = load_config()
+    try:
+        cfg = load_config()
+    except FileNotFoundError as e:
+        log(str(e))
+        sys.exit(1)
     users = cfg.get("users", [])
     interval = int(cfg.get("poll_interval_seconds", 60))
     if not users:
