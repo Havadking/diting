@@ -21,6 +21,12 @@
     const d = new Date(), p = n => String(n).padStart(2, "0");
     return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
   };
+  const userInitial = name => {
+    if (!name) return "?";
+    const clean = String(name).trim().replace(/^[@#\s]+/, "");
+    const chars = Array.from(clean);
+    return (chars[0] || "?").toUpperCase();
+  };
 
   /* ---------- 小图标 ---------- */
   const svg = (inner, fill) => html`<svg viewBox="0 0 24 24" fill=${fill || "none"} stroke=${fill ? "none" : "currentColor"} stroke-width="2" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{ __html: inner }}/>`;
@@ -975,14 +981,16 @@
             <h4>监控用户</h4>
             <div class="ulist">
               <button class=${"urow" + (!filter.user ? " on" : "")} title="全部用户" onClick=${() => setUser(null)}>
-                <span class="sw" style=${{ background: "var(--line-strong)" }}/>
+                <span class="sw all" style=${{ background: "var(--line-strong)" }}>全</span>
                 <span class="nm"><span>全部</span></span>
                 <span class="cnt">${todayCount.all}</span>
               </button>
               ${s.users.map(u => html`
                 <button key=${u.uid + u.name} class=${"urow" + (filter.user === u.name ? " on" : "")}
                         title=${u.name + "（今日 " + (todayCount.m[u.name] || 0) + " 条）"} onClick=${() => setUser(u.name)}>
-                  <span class="sw" style=${{ background: u.color || "var(--line-strong)" }}/>
+                  <span class=${"sw" + (!u.color ? " default-bg" : "")} style=${{ background: u.color || "var(--line-strong)" }}>
+                    ${userInitial(u.name)}
+                  </span>
                   <span class="nm"><span>${u.name}</span>${u.mute && I.mute}${u.check_appends && html`<span class="tag-mini">追加</span>`}</span>
                   <span class="cnt">${todayCount.m[u.name] || 0}</span>
                 </button>`)}
