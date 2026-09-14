@@ -287,6 +287,14 @@
   .legend span { display: inline-flex; align-items: center; gap: 5px; }
   .legend i { width: 10px; height: 10px; border-radius: 3px; background: var(--c); }
 
+  /* ---------- 断线横幅 / 加载更早 ---------- */
+  .banner {
+    position: sticky; top: 0; z-index: 4; text-align: center; padding: 7px 12px; font-size: 12.5px;
+    background: color-mix(in srgb, var(--warn) 18%, var(--card)); color: var(--ink-2);
+    border-bottom: 1px solid color-mix(in srgb, var(--warn) 40%, var(--line));
+  }
+  .older { display: flex; justify-content: center; padding: 14px 0 4px; }
+
   /* ---------- 页面内轻提示 / 退出遮罩 ---------- */
   .toast {
     position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 30;

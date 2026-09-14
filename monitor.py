@@ -126,6 +126,23 @@ def load_recent_messages(conn, limit=1000):
     return rows
 
 
+def load_messages_before(conn, before_time, before_key, limit=200):
+    """「加载更早」翻页：取严格早于游标 (before_time, before_key) 的 limit 条，返回按时间升序。
+    游标用 (time, key) 二元组而不只是 time，避免同一秒有多条时漏掉或重复。"""
+    cur = conn.execute(
+        "SELECT key, name, kind, icon, time, bar, content, link FROM messages "
+        "WHERE time < ? OR (time = ? AND key < ?) "
+        "ORDER BY time DESC, key DESC LIMIT ?", (before_time, before_time, before_key, limit))
+    cols = ["key", "name", "kind", "icon", "time", "bar", "content", "link"]
+    rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+    rows.reverse()
+    return rows
+
+
+def count_messages(conn):
+    return conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+
+
 # ---------- 抓取 ----------
 def fetch_json(url, uid):
     req = urllib.request.Request(url, headers={

@@ -54,7 +54,7 @@
 
   /* ---------- store ---------- */
   const initial = { items: [], keys: new Set(), status: { text: "连接中…", running: false, last_check: "" },
-                    users: [], config: {}, connected: false, loaded: false, quit: false };
+                    users: [], config: {}, connected: false, loaded: false, quit: false, hasMore: false };
   const byTime = (a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : (a.key < b.key ? -1 : 1));
   function mergeItems(items, keys, incoming) {
     let changed = false;
@@ -71,15 +71,22 @@
     switch (a.type) {
       case "snapshot": {
         const items = (a.data.items || []).slice().sort(byTime);
-        return { ...s, items, keys: new Set(items.map(i => i.key)), status: a.data.status || s.status,
-                 users: a.data.users || [], config: a.data.config || {}, loaded: true };
+        // 重连补漏时保留已经翻出来的更早历史：快照只覆盖最近 N 条，用 merge 而不是整体替换
+        const m = s.loaded ? mergeItems(s.items, s.keys, items) : null;
+        return { ...s, items: m ? m.items : items, keys: m ? m.keys : new Set(items.map(i => i.key)),
+                 status: a.data.status || s.status, users: a.data.users || [], config: a.data.config || {},
+                 loaded: true, hasMore: s.loaded ? s.hasMore : !!a.data.has_more };
       }
       case "append": {
         const m = mergeItems(s.items, s.keys, a.items);
         return m ? { ...s, ...m } : s;
       }
+      case "older": {
+        const m = mergeItems(s.items, s.keys, a.items);
+        return { ...s, ...(m || {}), hasMore: a.hasMore };
+      }
       case "status": return { ...s, status: a.status };
-      case "cleared": return { ...s, items: [], keys: new Set() };
+      case "cleared": return { ...s, items: [], keys: new Set(), hasMore: true };
       case "connected": return { ...s, connected: a.value };
       case "config": return { ...s, users: a.users || s.users };
       case "quit": return { ...s, quit: true, connected: false };
@@ -113,6 +120,12 @@
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
   };
   const NEW_MARK_MS = 3000;   // 「新」角标 + 高亮保留多久
+  const THEMES = ["system", "light", "dark"];
+  const applyTheme = t => {
+    const root = document.documentElement;
+    if (t === "light" || t === "dark") root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+  };
+  const isDarkNow = t => t === "dark" || (t === "system" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
   const BOTTOM_SLACK = 40;    // 距底部多少像素以内算"在底部"
 
   /* ---------- 组件 ---------- */
@@ -236,6 +249,12 @@
     const [s, dispatch] = useReducer(reducer, initial);
     const [drawer, setDrawer] = useState(false);
     const [menu, setMenu] = useState(false);
+    const [theme, setTheme] = useState(() => { const t = store.get("diting.theme", "system"); return THEMES.includes(t) ? t : "system"; });
+    useEffect(() => { applyTheme(theme); store.set("diting.theme", theme); }, [theme]);
+    // 点一下在浅/深之间切；当前跟随系统时按"看起来是什么"取反
+    const toggleTheme = () => setTheme(t => (isDarkNow(t) ? "light" : "dark"));
+    const [olderBusy, setOlderBusy] = useState(false);
+    const prependRef = useRef(null);   // 「加载更早」插入前记下滚动高度，渲染后把视口钉在原处
     const [msg, setMsg] = useState(null);
     const toastTimer = useRef(null);
     const toast = useCallback((text, kind) => {
@@ -262,6 +281,26 @@
       clear: () => window.confirm("清空当前列表？（不会删除 messages.db 里的历史）") && control("clear", "已清空"),
       quit: () => window.confirm("退出谛听？监控会停止，需要重新运行 server.py 才能恢复。") && control("quit"),
     };
+    const loadOlder = useCallback(async () => {
+      if (olderBusy || !s.hasMore) return;
+      const first = s.items[0];
+      setOlderBusy(true);
+      try {
+        const q = first ? "before=" + encodeURIComponent(first.time) + "&before_key=" + encodeURIComponent(first.key)
+                        : "before=" + encodeURIComponent("9999-99-99 99:99:99");
+        const r = await fetch("/api/items?" + q + "&limit=200", { cache: "no-store" });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const d = await r.json();
+        const el = mainRef.current;
+        prependRef.current = el ? { h: el.scrollHeight, top: el.scrollTop } : null;
+        dispatch({ type: "older", items: d.items || [], hasMore: !!d.has_more });
+        if (!(d.items || []).length) toast("没有更早的记录了");
+      } catch (e) {
+        toast("加载失败：" + e.message, "error");
+      } finally { setOlderBusy(false); }
+    }, [olderBusy, s.hasMore, s.items, toast]);
+    // 滚到顶部附近自动翻页。用 scroll 事件而不是 IntersectionObserver：后台标签页不渲染时 IO 不触发
+    const loadOlderRef = useRef(loadOlder); loadOlderRef.current = loadOlder;
     const [rail, setRail] = useState(() => {
       const v = store.get("diting.rail", null);
       return v === null ? window.innerWidth < 900 : !!v;
@@ -303,7 +342,10 @@
     // 滚到底了就把 FAB 计数清掉
     useEffect(() => {
       const el = mainRef.current; if (!el) return;
-      const h = () => { if (isAtBottom()) setPendingBelow(0); };
+      const h = () => {
+        if (isAtBottom()) setPendingBelow(0);
+        if (el.scrollTop < 80) loadOlderRef.current();
+      };
       el.addEventListener("scroll", h, { passive: true });
       return () => el.removeEventListener("scroll", h);
     }, []);
@@ -352,6 +394,8 @@
     // 跟随滚动：不用 requestAnimationFrame——标签页在后台时 rAF 不跑，切回来才追，体验像卡住
     useLayoutEffect(() => {
       if (followRef.current) { followRef.current = false; scrollToBottom(true); }
+      const el = mainRef.current, p = prependRef.current;
+      if (el && p) { prependRef.current = null; el.scrollTop = p.top + (el.scrollHeight - p.h); }
     }, [s.items, scrollToBottom]);
 
     // 首屏加载完滚到底（最新在最下面，和 tkinter 版一致）；字体晚到会撑高内容，就绪后再补滚一次
@@ -410,6 +454,7 @@
             <button class="btn" title="用户设置" onClick=${() => setDrawer(true)} disabled=${!s.loaded}>${I.gear}<span class="lbl">设置</span></button>
             <button class="btn quiet only-wide" title="测试通知" onClick=${act.test}>${I.bell}</button>
             <button class="btn quiet only-wide" title="清空列表" onClick=${act.clear}>${I.trash}</button>
+            <button class="btn quiet only-wide" title=${isDarkNow(theme) ? "切到浅色" : "切到深色"} onClick=${toggleTheme}>${isDarkNow(theme) ? I.sun : I.moon}</button>
             <button class="btn quiet only-wide" title="退出程序" onClick=${act.quit}>${I.power}</button>
             <div class="menu-wrap only-narrow">
               <button class="btn quiet" title="更多" onClick=${e => { e.stopPropagation(); setMenu(m => !m); }}>${I.more}</button>
@@ -417,6 +462,7 @@
                 <div class="menu" onClick=${e => e.stopPropagation()}>
                   <button onClick=${() => { setMenu(false); act.test(); }}>${I.bell}测试通知</button>
                   <button onClick=${() => { setMenu(false); act.clear(); }}>${I.trash}清空列表</button>
+                  <button onClick=${() => { setMenu(false); toggleTheme(); }}>${isDarkNow(theme) ? I.sun : I.moon}${isDarkNow(theme) ? "浅色模式" : "深色模式"}</button>
                   <hr/>
                   <button class="danger" onClick=${() => { setMenu(false); act.quit(); }}>${I.power}退出程序</button>
                 </div>`}
@@ -458,8 +504,13 @@
         </nav>
 
         <main class="main" ref=${mainRef}>
+          ${s.loaded && !s.connected && !s.quit && html`<div class="banner">已与后台断开，正在重连…（重连后会自动补齐漏掉的动态）</div>`}
           <div class="feed">
             ${!s.loaded && html`<p class="empty">${st.text}</p>`}
+            ${s.loaded && s.hasMore && html`
+              <div class="older">
+                <button class="btn quiet" disabled=${olderBusy} onClick=${loadOlder}>${olderBusy ? "加载中…" : "加载更早的记录"}</button>
+              </div>`}
             ${groups.map(([d, list]) => html`
               <${DateGroup} key=${d} date=${d} list=${list} isToday=${d === td} collapsed=${collapsedOf(d)}
                             onToggle=${() => toggleDate(d)} colorOf=${colorOf} openKey=${openKey} setOpenKey=${setOpenKey} newKeys=${newKeys}/>`)}

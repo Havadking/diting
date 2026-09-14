@@ -106,6 +106,29 @@ class MockCore(core.MonitorCore):
     def poll_config(self):
         return {"poll_interval_seconds": self.interval, "append_check_interval_seconds": 300}
 
+    def db_count(self):
+        return len(self.items) + len(self._older())
+
+    def _older(self):
+        """假的「库里更早的历史」：往前 30 天每天随机 3~8 条，只造一次。"""
+        if not hasattr(self, "_older_cache"):
+            rnd = random.Random(42)
+            rows = []
+            for day in range(3, 33):
+                for _ in range(rnd.randint(3, 8)):
+                    kind, tpl = rnd.choice(_NEW_POOL)
+                    u = rnd.choice(USERS)
+                    bar = rnd.choice(_BARS)
+                    hms = "%02d:%02d:%02d" % (rnd.randint(9, 15), rnd.randint(0, 59), rnd.randint(0, 59))
+                    rows.append(_entry(day, hms, u["name"], kind, bar, tpl.format(bar=bar)))
+            rows.sort(key=lambda x: (x["time"], x["key"]))
+            self._older_cache = rows
+        return self._older_cache
+
+    def load_older(self, before_time, before_key, limit=200):
+        pool = [e for e in self._older() if (e["time"], e["key"]) < (before_time, before_key)]
+        return pool[-limit:] if limit else pool
+
     def save_users(self, patch):
         by_name = {u["name"]: u for u in (patch or []) if isinstance(u, dict) and u.get("name")}
         for u in USERS:

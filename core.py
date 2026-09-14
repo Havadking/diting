@@ -129,11 +129,43 @@ class MonitorCore:
         self.status_text = text
         self._broadcast("status", self._status_payload())
 
-    def snapshot(self):
+    def snapshot(self, limit=300):
+        """首屏数据。items 只给内存里最近 limit 条（按时间排好序），更早的走 load_older() 从库里翻。"""
         with self.lock:
-            items = list(self.items)
-        return {"items": items, "status": self._status_payload(),
+            items = sorted(self.items, key=lambda x: (x["time"], x["key"]))
+        total = len(items)
+        if limit and total > limit:
+            items = items[total - limit:]
+        return {"items": items, "has_more": total > len(items) or self.db_count() > total,
+                "status": self._status_payload(),
                 "users": self.list_users(), "config": self.poll_config()}
+
+    def db_count(self):
+        """messages.db 总条数；开不了库就当 0。HTTP 线程调用，独立短连接。"""
+        try:
+            db = monitor.get_db()
+        except Exception:
+            return 0
+        try:
+            return monitor.count_messages(db)
+        except Exception:
+            return 0
+        finally:
+            db.close()
+
+    def load_older(self, before_time, before_key, limit=200):
+        """「加载更早」：从 messages.db 取游标之前的 limit 条。HTTP 线程调用，独立短连接、用完即关，
+        不碰后台线程那条写连接。"""
+        try:
+            db = monitor.get_db()
+        except Exception:
+            return []
+        try:
+            return monitor.load_messages_before(db, before_time, before_key, limit)
+        except Exception:
+            return []
+        finally:
+            db.close()
 
     # ---------- 历史 ----------
     def _load_history_from_db(self):

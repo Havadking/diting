@@ -20,7 +20,7 @@ import time
 import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(BASE_DIR, "web")
@@ -46,6 +46,13 @@ PLACEHOLDER_HTML = """<!doctype html><meta charset="utf-8"><title>谛听</title>
 <p>后端已启动，前端页面（<code>web/</code>）尚未就绪。</p>
 <p>试试 <a href="/api/snapshot">/api/snapshot</a> 或 <code>curl -N /api/events</code>。</p>
 </body>"""
+
+
+def _int_arg(qs, name, default, lo, hi):
+    try:
+        return max(lo, min(hi, int((qs.get(name) or [default])[0])))
+    except (TypeError, ValueError):
+        return default
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -91,7 +98,9 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/assets/"):
             return self._serve_static(path[len("/assets/"):])
         if path == "/api/snapshot":
-            return self._api_snapshot()
+            return self._api_snapshot(parse_qs(u.query))
+        if path == "/api/items":
+            return self._api_items(parse_qs(u.query))
         if path == "/api/events":
             return self._api_events()
         self._send_error_json(HTTPStatus.NOT_FOUND, "not found")
@@ -179,8 +188,19 @@ class Handler(BaseHTTPRequestHandler):
         self._send_bytes(data, MIME.get(ext, "application/octet-stream"))
 
     # ---- API ----
-    def _api_snapshot(self):
-        self._send_json(self.core.snapshot())
+    def _api_snapshot(self, qs):
+        limit = _int_arg(qs, "limit", 300, 1, 5000)
+        self._send_json(self.core.snapshot(limit))
+
+    def _api_items(self, qs):
+        """「加载更早」翻页。游标是 (before, before_key)，缺 before_key 时给个比所有 key 都大的哨兵。"""
+        before = (qs.get("before") or [""])[0]
+        before_key = (qs.get("before_key") or ["\uffff"])[0]
+        limit = _int_arg(qs, "limit", 200, 1, 1000)
+        if not before:
+            return self._send_error_json(HTTPStatus.BAD_REQUEST, "before required")
+        rows = self.core.load_older(before, before_key, limit)
+        self._send_json({"items": rows, "has_more": len(rows) >= limit})
 
     def _api_events(self):
         core = self.core
