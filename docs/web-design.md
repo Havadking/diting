@@ -225,7 +225,7 @@ App
 | 阶段 | 内容 | 状态 | 提交 |
 |---|---|---|---|
 | 0 | 设计文档 + 视觉稿 | ✅ | `003002f` |
-| 1 | `core.py`：抽离无 UI 的 `MonitorCore`，`app.py` 改为消费它 | ⬜ | |
+| 1 | `core.py`：抽离无 UI 的 `MonitorCore`，`app.py` 改为消费它 | ✅ | `4e44137` |
 | 2 | `server.py` 最小版：静态文件 + `/api/snapshot` + `/api/events` + `--mock` | ⬜ | |
 | 3 | `web/` 骨架：vendor 落地、Feed 只读渲染、接 snapshot + SSE | ⬜ | |
 | 4 | 交互：筛选、日期折叠、卡片展开、新动态角标、跟随滚动、标题未读数 | ⬜ | |
