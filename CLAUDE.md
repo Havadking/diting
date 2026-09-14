@@ -60,7 +60,7 @@ appmod.MonitorApp.start = lambda self, silent=False: None   # 跳过联网监控
 ### 一个核心、三个入口，能力不对等
 
 - **`core.py`** — `MonitorCore`：后台轮询线程、首轮基线/去重、追加监视、静音/合并/toast、写 `messages.db`、事件广播、读写用户设置。**无 UI 依赖，不许 import tkinter**。三个数据源全支持。
-- **`server.py` + `web/`** — 网页版，主要维护对象。`server.py` 是纯标准库 `ThreadingHTTPServer`，只绑 `127.0.0.1`，接口见 `docs/web-design.md` §5；`web/app.js` 是 React 18 + htm 写的单文件前端（htm 是标签模板函数，写法 `` html`<div class=${x}>` ``，不需要 JSX 编译）。所有 `POST` 校验 `Origin` 必须等于自己，别去掉——这是防止别的网页 fetch 本地端口让程序退出的唯一防线。
+- **`server.py` + `web/`** — 网页版，主要维护对象。`server.py` 是纯标准库 `ThreadingHTTPServer`，只绑 `127.0.0.1`，接口见 `docs/web-design.md` §5（该表**没有**收录 2026-09 v2 新增的 `/api/search`、`/api/probe_user`、`/api/users/manage`，见下方「v2 功能」）；`web/app.js` 是 React 18 + htm 写的单文件前端（htm 是标签模板函数，写法 `` html`<div class=${x}>` ``，不需要 JSX 编译）。所有 `POST` 校验 `Origin` 必须等于自己，别去掉——这是防止别的网页 fetch 本地端口让程序退出的唯一防线。
 - **`app.py`** — 旧版 tkinter 窗口，只是 `MonitorCore` 的另一层壳：`subscribe()` 一个队列，消费事件画 Treeview。稳定后会删，**不要再往里加功能**。
 - **`monitor.py`** — 双重身份：① 被 `core.py` import 的抓取/解析核心；② 独立的命令行推送版（`main()`）。注意 **`monitor.py` 的命令行 `main()` 只处理股吧用户**，推特/微博是 GUI 独有的。改抓取逻辑时两边都受影响，改轮询逻辑时通常只动 `core.py`。
 
@@ -124,7 +124,16 @@ key, kind, icon, time, title, content, bar, ctx_user, ctx_text, link
 - 条目按 `(time, key)` 升序，**今天在最下面、最新在最底**，和旧窗口版习惯一致；日期组默认只展开今天。
 - `content` 里的 `[评论《xx》] 正文` / `[转发自 某人《xx》] 正文` 前缀由 `splitCtx()` 正则拆出来单独渲染，DB 结构没改。
 - 跟随滚动用 `useLayoutEffect` + `followRef`，不用 `requestAnimationFrame`（后台标签页不跑）。
-- `localStorage` 键：`diting.rail`（侧栏收起）、`diting.theme`（`system|light|dark`）、`diting.filter`、`diting.collapsed`（只记非今天的日期）。读写都经 `store` 小工具包了 try/catch。
+- `localStorage` 键：`diting.rail`（侧栏收起）、`diting.theme`（`system|light|dark`）、`diting.filter`、`diting.collapsed`（只记非今天的日期）、`diting.dense`（紧凑单行模式）、`diting.sound`（新动态提示音开关）。读写都经 `store` 小工具包了 try/catch。
+
+### v2 功能（2026-09，P0/P1 已实现）
+
+规划文档是 `docs/v2-design.md`，P2（手机推送、删旧版 tkinter）还没做。已落地的几项跨文件契约：
+
+- **全库搜索**：`GET /api/search?q=&limit=` → `core.search()` → `monitor.search_messages()`，对 `messages.db` 的 `content/bar/name` 做 `LIKE` 匹配，HTTP 线程开独立短连接。前端顶栏搜索框先过滤内存里的条目，回车再打库；快捷键 `/` 聚焦搜索框。
+- **在线用户与参数管理**：`POST /api/users/manage` → `core.manage_config()`，`action` 取 `add` / `delete` / `update_all`。`update_all` 除用户设置外还写 `poll_interval_seconds`（钳到 10~3600）和 `append_check_interval_seconds`（钳到 30~7200），保存后广播 `("config", {users, config})`；**前端 reducer 的 `config` 分支只取 `users`**，轮询参数靠设置抽屉保存后重拉 `/api/snapshot` 刷新（`snapshot()` 里带 `config: poll_config()`）。`add` 前可先 `GET /api/probe_user?uid=` 探测昵称（`monitor.probe_guba_user()`，只支持股吧）。旧的 `POST /api/users`（`save_users()`）仍在。
+- **紧凑单行模式 / 提示音 / 未读断点线** 全是前端本地状态，后端无感知。提示音用 Web Audio 合成（`playDing()`），不带音频文件；未读断点线靠 `visibilitychange`：切走时记最新条目 `key`，切回时若有新条目就在其后画一条「上次看到这里」分界线。这些都依赖页面可见性，用 Claude 浏览器面板验证时同样要先截图让页面变可见。
+- **股票行情联动**：`web/app.js` 里硬编码 `POPULAR_STOCKS`（名称→代码）+ 正文里的 6 位代码识别，`renderRichContent()` 把命中文本渲染成指向 `quote.eastmoney.com` 的链接；卡片上的吧名也链到行情页。**只生成链接、不发请求**，不违反离线可用要求。
 
 `start()` 里先 join 旧线程、再给新线程一个全新的 `threading.Event`，是为修历史上的重复推送竞态（commit be583e0）——改动启停逻辑时别退化。
 
