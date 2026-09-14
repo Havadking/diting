@@ -275,9 +275,9 @@
   .swatch { width: 22px; height: 22px; border-radius: 6px; background: var(--c); border: 2px solid transparent; transition: transform .1s; }
   .swatch:hover { transform: scale(1.12); }
   .swatch.on { border-color: var(--ink); box-shadow: 0 0 0 2px var(--card) inset; }
-  .swatch.none { background: none; border: 1px dashed var(--line-strong); color: var(--ink-3); font-size: 10px; }
+  .swatch.none { width: auto; padding: 0 6px; white-space: nowrap; background: none; border: 1px dashed var(--line-strong); color: var(--ink-3); font-size: 10px; }
   .toggles { display: flex; gap: 14px; }
-  .tg { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-2); cursor: pointer; }
+  .tg { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-2); cursor: pointer; white-space: nowrap; user-select: none; }
   .tg i { width: 30px; height: 18px; border-radius: 999px; background: var(--line-strong); position: relative; transition: background .12s; }
   .tg i::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: left .12s; }
   .tg.on i { background: var(--accent); }
@@ -286,6 +286,19 @@
   .legend { display: flex; gap: 10px; flex-wrap: wrap; padding: 12px 24px 4px; font-size: 12px; color: var(--ink-3); }
   .legend span { display: inline-flex; align-items: center; gap: 5px; }
   .legend i { width: 10px; height: 10px; border-radius: 3px; background: var(--c); }
+
+  /* ---------- 页面内轻提示 / 退出遮罩 ---------- */
+  .toast {
+    position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 30;
+    padding: 9px 16px; border-radius: 8px; background: var(--ink); color: var(--bg); font-size: 13px;
+    box-shadow: var(--shadow-lg); animation: slide .15s ease-out; max-width: 80vw;
+  }
+  .toast.error { background: var(--danger); color: #fff; }
+  .scrim.quit { display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--bg) 88%, transparent); z-index: 40; }
+  .quit-box { text-align: center; color: var(--ink-2); line-height: 1.8; }
+  .quit-box .brand-mark { display: block; font-size: 32px; margin-bottom: 8px; }
+  .quit-box code { font-family: var(--mono); background: var(--card); padding: 1px 6px; border-radius: 4px; }
+  .btn:disabled { opacity: .5; cursor: default; }
 
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
   @media (max-width: 900px) { .feed { padding: 8px 14px 80px; } .card .body { padding: 10px 12px 11px 12px; } }

@@ -54,7 +54,7 @@
 
   /* ---------- store ---------- */
   const initial = { items: [], keys: new Set(), status: { text: "连接中…", running: false, last_check: "" },
-                    users: [], config: {}, connected: false, loaded: false };
+                    users: [], config: {}, connected: false, loaded: false, quit: false };
   const byTime = (a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : (a.key < b.key ? -1 : 1));
   function mergeItems(items, keys, incoming) {
     let changed = false;
@@ -81,8 +81,24 @@
       case "status": return { ...s, status: a.status };
       case "cleared": return { ...s, items: [], keys: new Set() };
       case "connected": return { ...s, connected: a.value };
+      case "config": return { ...s, users: a.users || s.users };
+      case "quit": return { ...s, quit: true, connected: false };
       default: return s;
     }
+  }
+
+  const PALETTE = [
+    ["朱红", "#ED5126"], ["橘橙", "#F97D1C"], ["土黄", "#D6A01D"], ["竹绿", "#1BA784"],
+    ["翠蓝", "#1E9EB3"], ["群青", "#1772B4"], ["青莲", "#8B2671"], ["品红", "#EF3473"],
+  ];
+
+  async function post(path, body) {
+    const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify(body || {}) });
+    let d = {};
+    try { d = await r.json(); } catch (e) {}
+    if (!r.ok || d.ok === false) throw new Error(d.error || ("HTTP " + r.status));
+    return d;
   }
 
   async function fetchSnapshot(dispatch) {
@@ -149,8 +165,103 @@
       </section>`;
   }
 
+  function Toast({ msg }) {
+    return msg ? html`<div class=${"toast" + (msg.kind === "error" ? " error" : "")} role="status">${msg.text}</div>` : null;
+  }
+
+  function Drawer({ users, onClose, onSaved, toast }) {
+    const [pend, setPend] = useState(() => Object.fromEntries(users.map(u => [u.name, { ...u }])));
+    const [saving, setSaving] = useState(false);
+    const upd = (nm, patch) => setPend(p => ({ ...p, [nm]: { ...p[nm], ...patch } }));
+    useEffect(() => {
+      const h = e => e.key === "Escape" && onClose();
+      window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h);
+    }, [onClose]);
+    const save = async () => {
+      setSaving(true);
+      try {
+        await post("/api/users", { users: Object.values(pend).map(u => ({
+          name: u.name, color: u.color || null, mute: !!u.mute, check_appends: !!u.check_appends })) });
+        toast("已保存用户设置");
+        onSaved && onSaved();
+        onClose();
+      } catch (e) {
+        toast("保存失败：" + e.message, "error");
+      } finally { setSaving(false); }
+    };
+    return html`
+      <div class="scrim" onClick=${onClose}/>
+      <aside class="drawer" role="dialog" aria-label="用户设置">
+        <header>
+          <div>
+            <h3>用户设置</h3>
+            <p>配色 · 静音 · 查追加 — 保存后立刻生效，不用重启</p>
+          </div>
+          <span class="spacer"/>
+          <button class="btn quiet" onClick=${onClose}>关闭</button>
+        </header>
+        <div class="legend">
+          ${PALETTE.map(([nm, hx]) => html`<span key=${hx}><i style=${{ "--c": hx }}/>${nm}</span>`)}
+        </div>
+        <div class="list">
+          ${users.map(u => {
+            const p = pend[u.name];
+            return html`
+              <div class="srow" key=${u.uid + u.name} style=${p.color ? { "--uc": p.color } : undefined}>
+                <div class="who"><b>${u.name}</b><span>${u.uid}</span></div>
+                <div class="swatches">
+                  <button class=${"swatch none" + (!p.color ? " on" : "")} title="默认（按类型配色）"
+                          onClick=${() => upd(u.name, { color: null })}>默认</button>
+                  ${PALETTE.map(([nm, hx]) => html`
+                    <button key=${hx} class=${"swatch" + ((p.color || "").toLowerCase() === hx.toLowerCase() ? " on" : "")} title=${nm}
+                            style=${{ "--c": hx }} onClick=${() => upd(u.name, { color: hx })}/>`)}
+                </div>
+                <div class="toggles">
+                  <label class=${"tg" + (p.mute ? " on" : "")} onClick=${() => upd(u.name, { mute: !p.mute })}><i/>静音</label>
+                  ${u.check_appends !== null && u.check_appends !== undefined && html`
+                    <label class=${"tg" + (p.check_appends ? " on" : "")} onClick=${() => upd(u.name, { check_appends: !p.check_appends })}><i/>查追加</label>`}
+                </div>
+              </div>`;
+          })}
+          ${!users.length && html`<p class="empty">config.json 里还没有用户。</p>`}
+        </div>
+        <footer>
+          <button class="btn" onClick=${onClose}>取消</button>
+          <button class="btn primary" disabled=${saving} onClick=${save}>${saving ? "保存中…" : "保存"}</button>
+        </footer>
+      </aside>`;
+  }
+
   function App() {
     const [s, dispatch] = useReducer(reducer, initial);
+    const [drawer, setDrawer] = useState(false);
+    const [menu, setMenu] = useState(false);
+    const [msg, setMsg] = useState(null);
+    const toastTimer = useRef(null);
+    const toast = useCallback((text, kind) => {
+      setMsg({ text, kind });
+      clearTimeout(toastTimer.current);
+      toastTimer.current = setTimeout(() => setMsg(null), 2600);
+    }, []);
+    // 点页面任意处收起 ⋯ 菜单
+    useEffect(() => {
+      if (!menu) return;
+      const h = () => setMenu(false);
+      window.addEventListener("click", h); return () => window.removeEventListener("click", h);
+    }, [menu]);
+    const control = useCallback(async (action, okText) => {
+      try {
+        await post("/api/control", { action });
+        if (action === "quit") dispatch({ type: "quit" });
+        else if (okText) toast(okText);
+      } catch (e) { toast("操作失败：" + e.message, "error"); }
+    }, [toast]);
+    const act = {
+      toggleRun: () => control(s.status.running ? "stop" : "start"),
+      test: () => control("test_toast", "已发送测试通知，看右下角"),
+      clear: () => window.confirm("清空当前列表？（不会删除 messages.db 里的历史）") && control("clear", "已清空"),
+      quit: () => window.confirm("退出谛听？监控会停止，需要重新运行 server.py 才能恢复。") && control("quit"),
+    };
     const [rail, setRail] = useState(() => {
       const v = store.get("diting.rail", null);
       return v === null ? window.innerWidth < 900 : !!v;
@@ -168,6 +279,8 @@
     const [unread, setUnread] = useState(0);               // 页面不可见时到达的新条数（标签页标题）
     const mainRef = useRef(null);
     const followRef = useRef(false);   // 新条目到达时用户在底部 → 渲染完跟着滚到底
+    const quitCloser = useRef(null);
+    useEffect(() => { if (s.quit && quitCloser.current) quitCloser.current(); }, [s.quit]);
     const td = today();
 
     useEffect(() => store.set("diting.rail", rail), [rail]);
@@ -226,11 +339,13 @@
         everOpened = true;
       };
       es.onerror = () => alive && dispatch({ type: "connected", value: false });
+      quitCloser.current = () => es.close();
       const on = (t, fn) => es.addEventListener(t, e => { try { fn(JSON.parse(e.data)); } catch (err) {} });
       on("history", d => dispatch({ type: "append", items: d }));
       on("new", onNew);
       on("status", d => dispatch({ type: "status", status: d }));
       on("cleared", () => { dispatch({ type: "cleared" }); setPendingBelow(0); });
+      on("config", d => dispatch({ type: "config", users: d.users }));
       return () => { alive = false; es.close(); };
     }, [onNew]);
 
@@ -289,11 +404,23 @@
           </div>
           <span class="spacer"/>
           <div class="tb-actions">
-            ${/* 控制按钮在阶段 5 接上 /api/control，这里先占位 */ null}
-            <button class="btn" title=${st.running ? "停止监控" : "开始监控"} disabled>
+            <button class="btn" title=${st.running ? "停止监控" : "开始监控"} onClick=${act.toggleRun} disabled=${!s.connected}>
               ${st.running ? I.pause : I.play}<span class="lbl">${st.running ? "停止监控" : "开始监控"}</span>
             </button>
-            <button class="btn" title="用户设置" disabled>${I.gear}<span class="lbl">设置</span></button>
+            <button class="btn" title="用户设置" onClick=${() => setDrawer(true)} disabled=${!s.loaded}>${I.gear}<span class="lbl">设置</span></button>
+            <button class="btn quiet only-wide" title="测试通知" onClick=${act.test}>${I.bell}</button>
+            <button class="btn quiet only-wide" title="清空列表" onClick=${act.clear}>${I.trash}</button>
+            <button class="btn quiet only-wide" title="退出程序" onClick=${act.quit}>${I.power}</button>
+            <div class="menu-wrap only-narrow">
+              <button class="btn quiet" title="更多" onClick=${e => { e.stopPropagation(); setMenu(m => !m); }}>${I.more}</button>
+              ${menu && html`
+                <div class="menu" onClick=${e => e.stopPropagation()}>
+                  <button onClick=${() => { setMenu(false); act.test(); }}>${I.bell}测试通知</button>
+                  <button onClick=${() => { setMenu(false); act.clear(); }}>${I.trash}清空列表</button>
+                  <hr/>
+                  <button class="danger" onClick=${() => { setMenu(false); act.quit(); }}>${I.power}退出程序</button>
+                </div>`}
+            </div>
           </div>
         </header>
 
@@ -341,6 +468,16 @@
           </div>
           ${pendingBelow > 0 && html`<button class="fab" onClick=${() => scrollToBottom(true)}>${I.down}<span>${pendingBelow} 条新动态</span></button>`}
         </main>
+
+        ${drawer && html`<${Drawer} users=${s.users} onClose=${() => setDrawer(false)} toast=${toast}/>`}
+        <${Toast} msg=${msg}/>
+        ${s.quit && html`
+          <div class="scrim quit">
+            <div class="quit-box">
+              <span class="brand-mark">谛听</span>
+              <p>程序已退出，可以关掉这个标签页了。<br/>要重新开始监控，请再运行一次 <code>server.py</code>（或双击 run_gui.bat）。</p>
+            </div>
+          </div>`}
       </div>`;
   }
 

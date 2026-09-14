@@ -77,7 +77,10 @@ class Handler(BaseHTTPRequestHandler):
         # SSE 长连接和静态文件太吵，只记 API 与错误
         if self.path.startswith("/api/events") or self.path.startswith("/assets/"):
             return
-        sys.stderr.write("[%s] %s\n" % (time.strftime("%H:%M:%S"), fmt % args))
+        try:
+            sys.stderr.write("[%s] %s\n" % (time.strftime("%H:%M:%S"), fmt % args))
+        except Exception:
+            pass  # 父进程/控制台没了导致 stderr 管道断掉时，别让一条日志把请求处理线程炸掉
 
     # ---- 路由 ----
     def do_GET(self):
@@ -94,15 +97,70 @@ class Handler(BaseHTTPRequestHandler):
         self._send_error_json(HTTPStatus.NOT_FOUND, "not found")
 
     def do_POST(self):
-        # 阶段 5 再实现 /api/control 与 /api/users；这里先把 Origin 校验立好
+        # 所有 POST 都要求 Origin 等于自己：防止别的网页用 fetch 打本地端口（比如远程让程序退出）
         if not self._origin_ok():
             return self._send_error_json(HTTPStatus.FORBIDDEN, "bad origin")
+        path = urlparse(self.path).path
+        try:
+            body = self._read_json()
+        except ValueError as e:
+            return self._send_error_json(HTTPStatus.BAD_REQUEST, str(e))
+        if path == "/api/control":
+            return self._api_control(body)
+        if path == "/api/users":
+            return self._api_users(body)
         self._send_error_json(HTTPStatus.NOT_FOUND, "not found")
 
     def _origin_ok(self):
         origin = self.headers.get("Origin", "")
         host = self.headers.get("Host", "")
         return bool(origin) and origin == "http://" + host
+
+    def _read_json(self, limit=256 * 1024):
+        n = int(self.headers.get("Content-Length") or 0)
+        if n > limit:
+            raise ValueError("body too large")
+        raw = self.rfile.read(n) if n else b""
+        if not raw:
+            return {}
+        try:
+            obj = json.loads(raw.decode("utf-8"))
+        except Exception:
+            raise ValueError("bad json")
+        if not isinstance(obj, dict):
+            raise ValueError("bad json")
+        return obj
+
+    def _api_control(self, body):
+        core = self.core
+        action = body.get("action")
+        if action == "start":
+            err = core.start()
+            return self._send_json({"ok": not err, "error": err} if err else {"ok": True})
+        if action == "stop":
+            core.stop()
+        elif action == "clear":
+            core.clear()
+        elif action == "test_toast":
+            core.test_toast()
+        elif action == "quit":
+            # 关掉标签页进程不会退出，页面上必须有个出口。先把响应发出去再退，浏览器那边才能显示"已退出"
+            self._send_json({"ok": True})
+            core.set_status("正在退出…")
+            threading.Timer(0.5, os._exit, [0]).start()
+            return
+        else:
+            return self._send_error_json(HTTPStatus.BAD_REQUEST, "unknown action")
+        self._send_json({"ok": True})
+
+    def _api_users(self, body):
+        users = body.get("users")
+        if not isinstance(users, list):
+            return self._send_error_json(HTTPStatus.BAD_REQUEST, "users must be a list")
+        err = self.core.save_users(users)
+        if err:
+            return self._send_json({"ok": False, "error": err}, HTTPStatus.INTERNAL_SERVER_ERROR)
+        self._send_json({"ok": True})
 
     # ---- 静态文件 ----
     def _serve_static(self, rel):

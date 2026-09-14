@@ -106,6 +106,24 @@ class MockCore(core.MonitorCore):
     def poll_config(self):
         return {"poll_interval_seconds": self.interval, "append_check_interval_seconds": 300}
 
+    def save_users(self, patch):
+        by_name = {u["name"]: u for u in (patch or []) if isinstance(u, dict) and u.get("name")}
+        for u in USERS:
+            p = by_name.get(u["name"])
+            if not p:
+                continue
+            for k in ("color", "mute", "check_appends"):
+                if p.get(k):
+                    u[k] = p[k]
+                else:
+                    u.pop(k, None)
+        self.refresh_config_maps()
+        self._broadcast("config", {"users": self.list_users()})
+        return None
+
+    def test_toast(self):
+        self.set_status("（演示模式）假装弹了一条测试通知。")
+
     def list_users(self):
         return [{"name": u["name"], "uid": u["uid"], "color": u.get("color"),
                  "mute": bool(u.get("mute")), "check_appends": bool(u.get("check_appends"))}

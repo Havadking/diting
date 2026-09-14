@@ -8,7 +8,6 @@
 不依赖任何第三方推送服务，无额度限制。
 """
 import os
-import json
 import queue
 import traceback
 import webbrowser
@@ -613,8 +612,7 @@ class MonitorApp:
                 else:
                     u.pop("check_appends", None)
             try:
-                with open(monitor.CONFIG_PATH, "w", encoding="utf-8") as f:
-                    json.dump(cfg, f, ensure_ascii=False, indent=2)
+                monitor.save_config(cfg)
             except Exception as e:
                 messagebox.showerror("保存失败", str(e))
                 return

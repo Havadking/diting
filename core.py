@@ -221,6 +221,50 @@ class MonitorCore:
             txt += "   微博 %d 人 · %ds" % (wb, cfg.get("weibo_poll_interval_seconds", 120))
         return txt
 
+    def save_users(self, patch):
+        """写回用户设置（配色 / 静音 / 查追加）。patch 是 [{name, color, mute, check_appends}]。
+        只改请求里出现且当前启用来源里存在的用户，其它用户、其它顶层键（weibo_cookie 等）原样保留；
+        推特/微博下线期间它们不会出现在 list_users() 里，自然也不会被误清空。返回 None 或错误文案。"""
+        try:
+            cfg = monitor.load_config()
+        except Exception as e:
+            return "读取 config.json 失败：%s" % e
+        by_name = {}
+        for u in patch or []:
+            if isinstance(u, dict) and u.get("name"):
+                by_name[u["name"]] = u
+        sources = [cfg.get("users", []) or []]
+        if ENABLE_TWITTER:
+            sources.append(cfg.get("twitter_users", []) or [])
+        if ENABLE_WEIBO:
+            sources.append(cfg.get("weibo_users", []) or [])
+        for i, users in enumerate(sources):
+            for u in users:
+                name = u.get("name") or u.get("uid") or u.get("handle")
+                p = by_name.get(name)
+                if not p:
+                    continue
+                if p.get("color"):
+                    u["color"] = p["color"]
+                else:
+                    u.pop("color", None)
+                if p.get("mute"):
+                    u["mute"] = True
+                else:
+                    u.pop("mute", None)
+                if i == 0:  # 「查追加」是股吧特有的
+                    if p.get("check_appends"):
+                        u["check_appends"] = True
+                    else:
+                        u.pop("check_appends", None)
+        try:
+            monitor.save_config(cfg)
+        except Exception as e:
+            return "保存 config.json 失败：%s" % e
+        self.refresh_config_maps()
+        self._broadcast("config", {"users": self.list_users()})
+        return None
+
     def poll_config(self):
         """前端要展示的轮询参数。读配置失败给默认值。"""
         try:

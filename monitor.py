@@ -60,6 +60,14 @@ def load_config():
         return json.load(f)
 
 
+def save_config(cfg):
+    """整体写回 config.json。先写临时文件再替换，避免写一半崩了把配置弄成空文件。"""
+    tmp = CONFIG_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, CONFIG_PATH)
+
+
 def load_state():
     if os.path.exists(STATE_PATH):
         try:
