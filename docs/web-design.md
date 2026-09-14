@@ -43,8 +43,9 @@ web/
     react.production.min.js        18.3.1 UMD
     react-dom.production.min.js    18.3.1 UMD
     htm.min.js                     3.1.1
-    diting-serif.woff2             Noto Serif SC 只含「谛听」两字的子集（品牌字）
-    jetbrains-mono.woff2           时间/数字用的等宽字体（可选，缺了退回 Consolas）
+    diting-serif.woff2             Noto Serif SC 700 只含「谛听」两字的子集（品牌字，1.3 KB）
+    jetbrains-mono.woff2           JetBrains Mono 只含数字和 :·/- 的子集（时间/计数用，5 KB）
+                                   两个子集都是 Google Fonts 的 css2?text= 接口直接给的，不用 fonttools
 app.py             旧 tkinter 版，暂留
 monitor.py         不动
 docs/web-design.md 本文
@@ -228,7 +229,7 @@ App
 | 0 | 设计文档 + 视觉稿 | ✅ | `003002f` |
 | 1 | `core.py`：抽离无 UI 的 `MonitorCore`，`app.py` 改为消费它 | ✅ | `4e44137` |
 | 2 | `server.py` 最小版：静态文件 + `/api/snapshot` + `/api/events` + `--mock` | ✅ | `7e84399` |
-| 3 | `web/` 骨架：vendor 落地、Feed 只读渲染、接 snapshot + SSE | ⬜ | |
+| 3 | `web/` 骨架：vendor 落地、Feed 只读渲染、接 snapshot + SSE | ✅ | 见 git log |
 | 4 | 交互：筛选、日期折叠、卡片展开、新动态角标、跟随滚动、标题未读数 | ⬜ | |
 | 5 | 设置抽屉 + `/api/users` + `/api/control`（启停/清空/测试通知/退出） | ⬜ | |
 | 6 | 收尾：深色模式、竖屏适配、加载更早、断线横幅、启动脚本、文档 | ⬜ | |
