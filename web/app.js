@@ -2,7 +2,7 @@
  * 数据流：启动 GET /api/snapshot → 整体替换；之后 EventSource(/api/events) 增量追加。见 docs/web-design.md §6。 */
 (function () {
   "use strict";
-  const { useState, useEffect, useMemo, useReducer, useRef, useCallback } = React;
+  const { useState, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useCallback } = React;
   const html = htm.bind(React.createElement);
 
   /* ---------- 常量 ---------- */
@@ -91,14 +91,22 @@
     dispatch({ type: "snapshot", data: await r.json() });
   }
 
+  /* ---------- localStorage 小工具（私有窗口/禁存储时 accessor 会抛，全部包起来） ---------- */
+  const store = {
+    get(k, dflt) { try { const v = localStorage.getItem(k); return v === null ? dflt : JSON.parse(v); } catch (e) { return dflt; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+  };
+  const NEW_MARK_MS = 3000;   // 「新」角标 + 高亮保留多久
+  const BOTTOM_SLACK = 40;    // 距底部多少像素以内算"在底部"
+
   /* ---------- 组件 ---------- */
-  function Card({ it, color, open, onToggle }) {
+  function Card({ it, color, open, isNew, onToggle }) {
     const k = KINDS[it.kind] || KINDS["发帖"];
     const { ctx, body } = useMemo(() => splitCtx(it), [it]);
-    const cls = ["card", open && "open", it.kind === "追加" && "append"].filter(Boolean).join(" ");
+    const cls = ["card", open && "open", isNew && "new", it.kind === "追加" && "append"].filter(Boolean).join(" ");
     const style = color ? { "--uc": color } : undefined;
     return html`
-      <div class=${cls} style=${style} tabIndex="0" onClick=${onToggle}
+      <div class=${cls} style=${style} tabIndex="0" onClick=${onToggle} data-key=${it.key}
            onKeyDown=${e => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onToggle())}>
         <div class="stripe"/>
         <div class="body">
@@ -120,7 +128,7 @@
       </div>`;
   }
 
-  function DateGroup({ date, list, isToday, collapsed, onToggle, colorOf, openKey, setOpenKey }) {
+  function DateGroup({ date, list, isToday, collapsed, onToggle, colorOf, openKey, setOpenKey, newKeys }) {
     return html`
       <section>
         <div class="dhead">
@@ -135,7 +143,7 @@
         ${!collapsed && html`
           <div class="cards">
             ${list.map(it => html`
-              <${Card} key=${it.key} it=${it} color=${colorOf(it.name)} open=${openKey === it.key}
+              <${Card} key=${it.key} it=${it} color=${colorOf(it.name)} open=${openKey === it.key} isNew=${newKeys.has(it.key)}
                        onToggle=${() => setOpenKey(k => (k === it.key ? null : it.key))}/>`)}
           </div>`}
       </section>`;
@@ -144,14 +152,67 @@
   function App() {
     const [s, dispatch] = useReducer(reducer, initial);
     const [rail, setRail] = useState(() => {
-      try { const v = localStorage.getItem("diting.rail"); if (v !== null) return v === "1"; } catch (e) {}
-      return window.innerWidth < 900;
+      const v = store.get("diting.rail", null);
+      return v === null ? window.innerWidth < 900 : !!v;
     });
     const [openKey, setOpenKey] = useState(null);
+    // 筛选：user 为 null 表示全部；kindOff 是被关掉的类型
+    const [filter, setFilter] = useState(() => {
+      const f = store.get("diting.filter", {}) || {};
+      return { user: f.user || null, kindOff: new Set(Array.isArray(f.kindOff) ? f.kindOff : []) };
+    });
+    // 日期折叠：只记用户手动点过的（非今天的），默认非今天折叠、今天展开
+    const [toggled, setToggled] = useState(() => new Map(Object.entries(store.get("diting.collapsed", {}) || {})));
+    const [newKeys, setNewKeys] = useState(() => new Set());
+    const [pendingBelow, setPendingBelow] = useState(0);   // 用户不在底部时到达的新条数（FAB 上的 N）
+    const [unread, setUnread] = useState(0);               // 页面不可见时到达的新条数（标签页标题）
     const mainRef = useRef(null);
+    const followRef = useRef(false);   // 新条目到达时用户在底部 → 渲染完跟着滚到底
     const td = today();
 
-    useEffect(() => { try { localStorage.setItem("diting.rail", rail ? "1" : "0"); } catch (e) {} }, [rail]);
+    useEffect(() => store.set("diting.rail", rail), [rail]);
+    useEffect(() => store.set("diting.filter", { user: filter.user, kindOff: [...filter.kindOff] }), [filter]);
+    useEffect(() => {
+      const o = {}; for (const [d, v] of toggled) if (d !== td) o[d] = v;
+      store.set("diting.collapsed", o);
+    }, [toggled, td]);
+
+    const isAtBottom = () => {
+      const el = mainRef.current; if (!el) return true;
+      return el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_SLACK;
+    };
+    const scrollToBottom = useCallback((smooth) => {
+      const el = mainRef.current; if (!el) return;
+      el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+      setPendingBelow(0);
+    }, []);
+
+    // 滚到底了就把 FAB 计数清掉
+    useEffect(() => {
+      const el = mainRef.current; if (!el) return;
+      const h = () => { if (isAtBottom()) setPendingBelow(0); };
+      el.addEventListener("scroll", h, { passive: true });
+      return () => el.removeEventListener("scroll", h);
+    }, []);
+
+    // 新动态到达：标「新」、算 FAB / 标题计数。筛选条件走 ref 拿最新值，避免 SSE effect 依赖它而反复重连。
+    const filterRef = useRef(filter); filterRef.current = filter;
+    const matches = (it, f) => (!f.user || it.name === f.user) && !f.kindOff.has(it.kind);
+    const onNew = useCallback((entries) => {
+      const fresh = (entries || []).filter(e => e && e.key);
+      if (!fresh.length) return;
+      const wasAtBottom = isAtBottom();
+      dispatch({ type: "append", items: fresh });
+      setNewKeys(prev => { const n = new Set(prev); fresh.forEach(e => n.add(e.key)); return n; });
+      setTimeout(() => setNewKeys(prev => { const n = new Set(prev); fresh.forEach(e => n.delete(e.key)); return n; }), NEW_MARK_MS);
+      const visibleCount = fresh.filter(e => matches(e, filterRef.current)).length;
+      if (document.visibilityState !== "visible") setUnread(u => u + visibleCount);
+      if (wasAtBottom) {
+        followRef.current = true;   // 由下面的 useLayoutEffect 在新卡片进 DOM 后立刻滚
+      } else if (visibleCount) {
+        setPendingBelow(n => n + visibleCount);
+      }
+    }, [scrollToBottom]);
 
     // 启动：拉快照 + 开 SSE。断线重连成功后再拉一次快照补漏（EventSource 自己会重连）。
     useEffect(() => {
@@ -167,16 +228,31 @@
       es.onerror = () => alive && dispatch({ type: "connected", value: false });
       const on = (t, fn) => es.addEventListener(t, e => { try { fn(JSON.parse(e.data)); } catch (err) {} });
       on("history", d => dispatch({ type: "append", items: d }));
-      on("new", d => dispatch({ type: "append", items: d }));
+      on("new", onNew);
       on("status", d => dispatch({ type: "status", status: d }));
-      on("cleared", () => dispatch({ type: "cleared" }));
+      on("cleared", () => { dispatch({ type: "cleared" }); setPendingBelow(0); });
       return () => { alive = false; es.close(); };
-    }, []);
+    }, [onNew]);
 
-    // 首屏加载完滚到底（最新在最下面，和 tkinter 版一致）
+    // 跟随滚动：不用 requestAnimationFrame——标签页在后台时 rAF 不跑，切回来才追，体验像卡住
+    useLayoutEffect(() => {
+      if (followRef.current) { followRef.current = false; scrollToBottom(true); }
+    }, [s.items, scrollToBottom]);
+
+    // 首屏加载完滚到底（最新在最下面，和 tkinter 版一致）；字体晚到会撑高内容，就绪后再补滚一次
     useEffect(() => {
-      if (s.loaded && mainRef.current) mainRef.current.scrollTop = mainRef.current.scrollHeight;
-    }, [s.loaded]);
+      if (!s.loaded) return;
+      scrollToBottom(false);
+      if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => scrollToBottom(false));
+    }, [s.loaded, scrollToBottom]);
+
+    // 标签页标题带未读数，切回页面清零——放副屏时一眼能看到
+    useEffect(() => { document.title = unread ? "(" + unread + ") 谛听" : "谛听"; }, [unread]);
+    useEffect(() => {
+      const h = () => { if (document.visibilityState === "visible") setUnread(0); };
+      document.addEventListener("visibilitychange", h);
+      return () => document.removeEventListener("visibilitychange", h);
+    }, []);
 
     const colorMap = useMemo(() => Object.fromEntries(s.users.filter(u => u.color).map(u => [u.name, u.color])), [s.users]);
     const colorOf = useCallback(n => colorMap[n], [colorMap]);
@@ -185,16 +261,18 @@
       for (const i of s.items) if (i.time.startsWith(td)) { m[i.name] = (m[i.name] || 0) + 1; all++; }
       return { m, all };
     }, [s.items, td]);
+    const shown = useMemo(() => s.items.filter(i => matches(i, filter)), [s.items, filter]);
     // 按日期分组，升序：旧日期在上、今天在最下面
     const groups = useMemo(() => {
       const g = new Map();
-      for (const i of s.items) { const d = i.time.slice(0, 10) || "未知日期"; if (!g.has(d)) g.set(d, []); g.get(d).push(i); }
+      for (const i of shown) { const d = i.time.slice(0, 10) || "未知日期"; if (!g.has(d)) g.set(d, []); g.get(d).push(i); }
       return [...g.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-    }, [s.items]);
-    // 非今天的日期默认折叠；用户点过的以用户为准
-    const [userToggled, setUserToggled] = useState(() => new Map());
-    const collapsedOf = d => (userToggled.has(d) ? userToggled.get(d) : d !== td);
-    const toggleDate = d => setUserToggled(m => { const n = new Map(m); n.set(d, !collapsedOf(d)); return n; });
+    }, [shown]);
+    const collapsedOf = d => (toggled.has(d) ? toggled.get(d) : d !== td);
+    const toggleDate = d => setToggled(m => { const n = new Map(m); n.set(d, !collapsedOf(d)); return n; });
+    const setUser = u => setFilter(f => ({ ...f, user: f.user === u ? null : u }));
+    const toggleKind = k => setFilter(f => { const n = new Set(f.kindOff); n.has(k) ? n.delete(k) : n.add(k); return { ...f, kindOff: n }; });
+    const filtering = filter.user || filter.kindOff.size > 0;
 
     const st = s.status;
     return html`
@@ -223,13 +301,14 @@
           <div>
             <h4>监控用户</h4>
             <div class="ulist">
-              <button class="urow on" title="全部用户">
+              <button class=${"urow" + (!filter.user ? " on" : "")} title="全部用户" onClick=${() => setUser(null)}>
                 <span class="sw" style=${{ background: "var(--line-strong)" }}/>
                 <span class="nm"><span>全部</span></span>
                 <span class="cnt">${todayCount.all}</span>
               </button>
               ${s.users.map(u => html`
-                <button key=${u.uid + u.name} class="urow" title=${u.name + "（今日 " + (todayCount.m[u.name] || 0) + " 条）"}>
+                <button key=${u.uid + u.name} class=${"urow" + (filter.user === u.name ? " on" : "")}
+                        title=${u.name + "（今日 " + (todayCount.m[u.name] || 0) + " 条）"} onClick=${() => setUser(u.name)}>
                   <span class="sw" style=${{ background: u.color || "var(--line-strong)" }}/>
                   <span class="nm"><span>${u.name}</span>${u.mute && I.mute}${u.check_appends && html`<span class="tag-mini">追加</span>`}</span>
                   <span class="cnt">${todayCount.m[u.name] || 0}</span>
@@ -241,23 +320,26 @@
             <h4>动态类型</h4>
             <div class="kinds">
               ${["发帖", "评论", "转发", "追加"].map(k => html`
-                <button key=${k} class="chip on" style=${{ "--c": KINDS[k].fg, "--kbg": KINDS[k].bg }} title=${k}><i/><span>${k}</span></button>`)}
+                <button key=${k} class=${"chip " + (filter.kindOff.has(k) ? "off" : "on")} style=${{ "--c": KINDS[k].fg, "--kbg": KINDS[k].bg }}
+                        title=${k} onClick=${() => toggleKind(k)}><i/><span>${k}</span></button>`)}
             </div>
           </div>
           <div class="side-foot">
             轮询间隔 <b>${s.config.poll_interval_seconds || "—"} s</b> · 查追加 <b>${s.config.append_check_interval_seconds || "—"} s</b><br/>
-            列表 <b>${s.items.length.toLocaleString()}</b> 条
+            列表 <b>${s.items.length.toLocaleString()}</b> 条${filtering ? html`，显示 <b>${shown.length}</b>` : ""}
           </div>
         </nav>
 
         <main class="main" ref=${mainRef}>
           <div class="feed">
-            ${!s.loaded && html`<p style=${{ color: "var(--ink-3)", padding: "40px 0", textAlign: "center" }}>${st.text}</p>`}
+            ${!s.loaded && html`<p class="empty">${st.text}</p>`}
             ${groups.map(([d, list]) => html`
               <${DateGroup} key=${d} date=${d} list=${list} isToday=${d === td} collapsed=${collapsedOf(d)}
-                            onToggle=${() => toggleDate(d)} colorOf=${colorOf} openKey=${openKey} setOpenKey=${setOpenKey}/>`)}
-            ${s.loaded && !s.items.length && html`<p style=${{ color: "var(--ink-3)", padding: "40px 0", textAlign: "center" }}>还没有任何动态。</p>`}
+                            onToggle=${() => toggleDate(d)} colorOf=${colorOf} openKey=${openKey} setOpenKey=${setOpenKey} newKeys=${newKeys}/>`)}
+            ${s.loaded && !s.items.length && html`<p class="empty">还没有任何动态。</p>`}
+            ${s.loaded && s.items.length > 0 && !shown.length && html`<p class="empty">当前筛选下没有动态。<button class="link" onClick=${() => setFilter({ user: null, kindOff: new Set() })}>清除筛选</button></p>`}
           </div>
+          ${pendingBelow > 0 && html`<button class="fab" onClick=${() => scrollToBottom(true)}>${I.down}<span>${pendingBelow} 条新动态</span></button>`}
         </main>
       </div>`;
   }

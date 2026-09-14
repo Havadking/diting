@@ -245,6 +245,10 @@
   @keyframes glow { from { background: var(--new-glow); } to { background: var(--card); } }
   .card.append .stripe { background: repeating-linear-gradient(180deg, var(--uc, var(--k-append-fg)) 0 6px, transparent 6px 10px); }
 
+  .empty { color: var(--ink-3); padding: 40px 0; text-align: center; }
+  .link { color: var(--accent); padding: 0 4px; }
+  .link:hover { text-decoration: underline; }
+  .fab svg { width: 15px; height: 15px; }
   .fab {
     position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 3;
     display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 999px;
