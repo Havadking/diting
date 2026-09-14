@@ -42,7 +42,32 @@
     cards: svg('<rect x="4" y="4" width="16" height="6" rx="1.5"/><rect x="4" y="14" width="16" height="6" rx="1.5"/>'),
     search: svg('<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/>'),
     x: svg('<path d="M18 6L6 18M6 6l12 12"/>'),
+    volume: svg('<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14"/>'),
+    volumeX: svg('<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>'),
   };
+
+  let audioCtx = null;
+  function playDing(volume = 0.5) {
+    try {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContext) return;
+      if (!audioCtx) audioCtx = new AudioContext();
+      if (audioCtx.state === "suspended") audioCtx.resume();
+      const now = audioCtx.currentTime;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(880, now);
+      osc.frequency.exponentialRampToValueAtTime(1760, now + 0.08);
+      const vol = Math.max(0, Math.min(1, volume));
+      gain.gain.setValueAtTime(vol * 0.4, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(now);
+      osc.stop(now + 0.3);
+    } catch (e) {}
+  }
 
   function highlight(text, kw) {
     if (!kw || !text) return text;
@@ -54,6 +79,7 @@
       part.toLowerCase() === kw.toLowerCase() ? html`<mark class="kw" key=${i}>${part}</mark>` : part
     );
   }
+
 
 
   /* ---------- 正文里的上下文前缀拆分 ----------
@@ -174,7 +200,17 @@
       </div>`;
   }
 
-  function DateGroup({ date, list, isToday, collapsed, onToggle, colorOf, openKey, setOpenKey, newKeys, kw }) {
+  function UnreadDivider({ time, onClear }) {
+    return html`
+      <div class="unread-divider" role="separator" aria-label="上次看到这里">
+        <span class="line"/>
+        <span class="badge">🔴 上次看到这里${time ? " (" + time + ")" : ""}</span>
+        <span class="line"/>
+        <button class="clear-btn" title="清除未读标记" onClick=${onClear}>✕</button>
+      </div>`;
+  }
+
+  function DateGroup({ date, list, isToday, collapsed, onToggle, colorOf, openKey, setOpenKey, newKeys, kw, firstUnreadKey, dividerTime, onClearDivider }) {
     return html`
       <section>
         <div class="dhead">
@@ -189,17 +225,21 @@
         ${!collapsed && html`
           <div class="cards">
             ${list.map(it => html`
-              <${Card} key=${it.key} it=${it} color=${colorOf(it.name)} open=${openKey === it.key} isNew=${newKeys.has(it.key)}
-                       kw=${kw} onToggle=${() => setOpenKey(k => (k === it.key ? null : it.key))}/>`)}
+              <${React.Fragment} key=${it.key}>
+                ${it.key === firstUnreadKey && html`<${UnreadDivider} time=${dividerTime} onClear=${onClearDivider}/>`}
+                <${Card} it=${it} color=${colorOf(it.name)} open=${openKey === it.key} isNew=${newKeys.has(it.key)}
+                         kw=${kw} onToggle=${() => setOpenKey(k => (k === it.key ? null : it.key))}/>
+              </${React.Fragment}>`)}
           </div>`}
       </section>`;
   }
+
 
   function Toast({ msg }) {
     return msg ? html`<div class=${"toast" + (msg.kind === "error" ? " error" : "")} role="status">${msg.text}</div>` : null;
   }
 
-  function Drawer({ users, config, onClose, onSaved, toast }) {
+  function Drawer({ users, config, sound, onToggleSound, onClose, onSaved, toast }) {
     const [pend, setPend] = useState(() => Object.fromEntries(users.map(u => [String(u.uid), { ...u }])));
     const [pollSec, setPollSec] = useState(config.poll_interval_seconds || 60);
     const [appendSec, setAppendSec] = useState(config.append_check_interval_seconds || 300);
@@ -348,10 +388,17 @@
         </div>
 
         <div class="cfg-box">
-          <h4>运行参数</h4>
+          <h4>运行与提醒参数</h4>
           <div class="cfg-row">
             <label>轮询间隔: <input type="number" class="input-text" min="10" max="3600" value=${pollSec} onInput=${e => setPollSec(e.target.value)}/> 秒</label>
             <label>查追加间隔: <input type="number" class="input-text" min="30" max="7200" value=${appendSec} onInput=${e => setAppendSec(e.target.value)}/> 秒</label>
+          </div>
+          <div class="cfg-row" style=${{ marginTop: "10px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <label style=${{ display: "inline-flex", alignItems: "center", gap: "6px", cursor: "pointer" }}>
+              <input type="checkbox" checked=${sound} onChange=${e => onToggleSound && onToggleSound(e.target.checked)}/>
+              <span>后台盯盘声音提示（清脆音）</span>
+            </label>
+            <button class="btn quiet" style=${{ padding: "3px 10px", fontSize: "12px" }} onClick=${() => playDing(0.6)}>${I.volume} 试听</button>
           </div>
         </div>
 
@@ -426,6 +473,49 @@
     const [dense, setDense] = useState(() => store.get("diting.dense", false));
     useEffect(() => store.set("diting.dense", dense), [dense]);
     const toggleDense = () => setDense(d => !d);
+
+    const [sound, setSound] = useState(() => store.get("diting.sound", true));
+    useEffect(() => store.set("diting.sound", sound), [sound]);
+    const toggleSound = () => setSound(s => !s);
+    const soundRef = useRef(sound); soundRef.current = sound;
+    const usersRef = useRef(s.users); usersRef.current = s.users;
+
+    const lastSeenKeyRef = useRef(null);
+    const leaveTimeRef = useRef(null);
+    const [firstUnreadKey, setFirstUnreadKey] = useState(null);
+    const [dividerTime, setDividerTime] = useState(null);
+
+    // 监听页面可见性：切走时记录最新条目的 key；切回时若有新动态，标记未读断点
+    useEffect(() => {
+      const onVisibility = () => {
+        if (document.visibilityState === "hidden") {
+          const latest = s.items[s.items.length - 1];
+          if (latest) {
+            lastSeenKeyRef.current = latest.key;
+            leaveTimeRef.current = new Date().toTimeString().slice(0, 5);
+          }
+        } else if (document.visibilityState === "visible") {
+          setUnread(0);
+          if (lastSeenKeyRef.current && s.items.length > 0) {
+            const idx = s.items.findIndex(i => i.key === lastSeenKeyRef.current);
+            if (idx !== -1 && idx < s.items.length - 1) {
+              setFirstUnreadKey(s.items[idx + 1].key);
+              setDividerTime(leaveTimeRef.current || new Date().toTimeString().slice(0, 5));
+            }
+          }
+          const latest = s.items[s.items.length - 1];
+          if (latest) lastSeenKeyRef.current = latest.key;
+        }
+      };
+      document.addEventListener("visibilitychange", onVisibility);
+      return () => document.removeEventListener("visibilitychange", onVisibility);
+    }, [s.items]);
+
+    useEffect(() => {
+      if (document.visibilityState === "visible" && s.items.length > 0 && !firstUnreadKey) {
+        lastSeenKeyRef.current = s.items[s.items.length - 1].key;
+      }
+    }, [s.items, firstUnreadKey]);
 
     const [query, setQuery] = useState("");
     const [searchDb, setSearchDb] = useState(null);
@@ -522,6 +612,19 @@
       } else if (visibleCount) {
         setPendingBelow(n => n + visibleCount);
       }
+      if (soundRef.current) {
+        const isBackground = document.visibilityState !== "visible" || !document.hasFocus();
+        if (isBackground) {
+          const users = usersRef.current || [];
+          const hasAudible = fresh.some(e => {
+            const u = users.find(x => x.name === e.name);
+            return !u || !u.mute;
+          });
+          if (hasAudible) {
+            playDing(0.6);
+          }
+        }
+      }
     }, [scrollToBottom]);
 
     // 启动：拉快照 + 开 SSE。断线重连成功后再拉一次快照补漏（EventSource 自己会重连）。
@@ -562,11 +665,6 @@
 
     // 标签页标题带未读数，切回页面清零——放副屏时一眼能看到
     useEffect(() => { document.title = unread ? "(" + unread + ") 谛听" : "谛听"; }, [unread]);
-    useEffect(() => {
-      const h = () => { if (document.visibilityState === "visible") setUnread(0); };
-      document.addEventListener("visibilitychange", h);
-      return () => document.removeEventListener("visibilitychange", h);
-    }, []);
 
     const colorMap = useMemo(() => Object.fromEntries(s.users.filter(u => u.color).map(u => [u.name, u.color])), [s.users]);
     const colorOf = useCallback(n => colorMap[n], [colorMap]);
@@ -601,7 +699,11 @@
       return [...g.entries()].sort((a, b) => a[0].localeCompare(b[0]));
     }, [filteredShown]);
 
-    const collapsedOf = d => (activeQuery || searchDb !== null ? false : (toggled.has(d) ? toggled.get(d) : d !== td));
+    const collapsedOf = d => {
+      if (activeQuery || searchDb !== null) return false;
+      if (firstUnreadKey && groups.some(([gDate, gList]) => gDate === d && gList.some(it => it.key === firstUnreadKey))) return false;
+      return toggled.has(d) ? toggled.get(d) : d !== td;
+    };
     const toggleDate = d => setToggled(m => { const n = new Map(m); n.set(d, !collapsedOf(d)); return n; });
     const setUser = u => setFilter(f => ({ ...f, user: f.user === u ? null : u }));
     const toggleKind = k => setFilter(f => { const n = new Set(f.kindOff); n.has(k) ? n.delete(k) : n.add(k); return { ...f, kindOff: n }; });
@@ -635,6 +737,11 @@
 
           <span class="spacer"/>
           <div class="tb-actions">
+            <button class=${"btn quiet only-wide" + (sound ? "" : " muted")}
+                    title=${sound ? "声音提示：开启（后台有新动态时响铃）" : "声音提示：关闭（点击开启）"}
+                    onClick=${toggleSound}>
+              ${sound ? I.volume : I.volumeX}
+            </button>
             <button class=${"btn quiet only-wide" + (dense ? " active" : "")} title=${dense ? "切到标准卡片模式" : "切到紧凑单行模式"} onClick=${toggleDense}>
               ${dense ? I.cards : I.rows}
             </button>
@@ -650,6 +757,7 @@
               <button class="btn quiet" title="更多" onClick=${e => { e.stopPropagation(); setMenu(m => !m); }}>${I.more}</button>
               ${menu && html`
                 <div class="menu" onClick=${e => e.stopPropagation()}>
+                  <button onClick=${() => { setMenu(false); toggleSound(); }}>${sound ? I.volume : I.volumeX}${sound ? "声音提示：开" : "声音提示：关"}</button>
                   <button onClick=${() => { setMenu(false); toggleDense(); }}>${dense ? I.cards : I.rows}${dense ? "卡片模式" : "紧凑模式"}</button>
                   <button onClick=${() => { setMenu(false); act.test(); }}>${I.bell}测试通知</button>
                   <button onClick=${() => { setMenu(false); act.clear(); }}>${I.trash}清空列表</button>
@@ -715,14 +823,15 @@
               </div>`}
             ${groups.map(([d, list]) => html`
               <${DateGroup} key=${d} date=${d} list=${list} isToday=${d === td} collapsed=${collapsedOf(d)}
-                            onToggle=${() => toggleDate(d)} colorOf=${colorOf} openKey=${openKey} setOpenKey=${setOpenKey} newKeys=${newKeys} kw=${activeQuery}/>`)}
+                            onToggle=${() => toggleDate(d)} colorOf=${colorOf} openKey=${openKey} setOpenKey=${setOpenKey} newKeys=${newKeys} kw=${activeQuery}
+                            firstUnreadKey=${firstUnreadKey} dividerTime=${dividerTime} onClearDivider=${() => setFirstUnreadKey(null)}/>`)}
             ${s.loaded && !s.items.length && html`<p class="empty">还没有任何动态。</p>`}
             ${s.loaded && s.items.length > 0 && !filteredShown.length && html`<p class="empty">当前筛选/搜索下没有动态。<button class="link" onClick=${() => { clearSearch(); setFilter({ user: null, kindOff: new Set() }); }}>清除筛选与搜索</button></p>`}
           </div>
           ${pendingBelow > 0 && html`<button class="fab" onClick=${() => scrollToBottom(true)}>${I.down}<span>${pendingBelow} 条新动态</span></button>`}
         </main>
 
-        ${drawer && html`<${Drawer} users=${s.users} config=${s.config} onClose=${() => setDrawer(false)} onSaved=${() => fetchSnapshot(dispatch).catch(() => {})} toast=${toast}/>`}
+        ${drawer && html`<${Drawer} users=${s.users} config=${s.config} sound=${sound} onToggleSound=${setSound} onClose=${() => setDrawer(false)} onSaved=${() => fetchSnapshot(dispatch).catch(() => {})} toast=${toast}/>`}
         <${Toast} msg=${msg}/>
         ${s.quit && html`
           <div class="scrim quit">
