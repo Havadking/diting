@@ -143,6 +143,22 @@ def count_messages(conn):
     return conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
 
 
+def search_messages(conn, keyword, limit=100):
+    """根据关键词在 messages.db 中检索正文、吧名、作者名，返回按时间升序（旧的在前）以便列表统一追加。"""
+    kw = (keyword or "").strip()
+    if not kw:
+        return []
+    pat = "%" + kw + "%"
+    cur = conn.execute(
+        "SELECT key, name, kind, icon, time, bar, content, link FROM messages "
+        "WHERE content LIKE ? OR bar LIKE ? OR name LIKE ? "
+        "ORDER BY time DESC, key DESC LIMIT ?", (pat, pat, pat, limit))
+    cols = ["key", "name", "kind", "icon", "time", "bar", "content", "link"]
+    rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+    rows.reverse()
+    return rows
+
+
 # ---------- 抓取 ----------
 def fetch_json(url, uid):
     req = urllib.request.Request(url, headers={
@@ -226,6 +242,30 @@ def parse_replies(uid):
             "link": make_link(code, src_post),
         })
     return items
+
+
+def probe_guba_user(uid):
+    """探测指定 UID 是否是合法的股吧用户，并返回其东财昵称。"""
+    uid = str(uid).strip()
+    if not uid or not uid.isdigit():
+        raise ValueError("UID 必须是纯数字")
+    url = POST_API % uid
+    data = fetch_json(url, uid)
+    p_list = get_list(data)
+    name = ""
+    if p_list:
+        p0 = p_list[0]
+        name = p0.get("user_nickname") or p0.get("user_name") or ""
+    if not name:
+        try:
+            rdata = fetch_json(REPLY_API % uid, uid)
+            r_list = get_list(rdata)
+            if r_list:
+                r0 = r_list[0]
+                name = r0.get("reply_user_nickname") or r0.get("reply_user_name") or ""
+        except Exception:
+            pass
+    return {"uid": uid, "name": name or ("股友" + uid[-4:])}
 
 
 # ---------- 推特(X) ----------

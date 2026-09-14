@@ -38,7 +38,23 @@
     power: svg('<path d="M18.4 6.6a9 9 0 1 1-12.8 0M12 2v10"/>'),
     down: svg('<path d="M12 5v14M5 12l7 7 7-7"/>'),
     more: svg('<circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/>', "currentColor"),
+    rows: svg('<path d="M4 6h16M4 12h16M4 18h16"/>'),
+    cards: svg('<rect x="4" y="4" width="16" height="6" rx="1.5"/><rect x="4" y="14" width="16" height="6" rx="1.5"/>'),
+    search: svg('<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/>'),
+    x: svg('<path d="M18 6L6 18M6 6l12 12"/>'),
   };
+
+  function highlight(text, kw) {
+    if (!kw || !text) return text;
+    const str = String(text);
+    const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const parts = str.split(new RegExp(`(${escaped})`, "gi"));
+    if (parts.length <= 1) return text;
+    return parts.map((part, i) =>
+      part.toLowerCase() === kw.toLowerCase() ? html`<mark class="kw" key=${i}>${part}</mark>` : part
+    );
+  }
+
 
   /* ---------- 正文里的上下文前缀拆分 ----------
    * core._add_item 把上下文拼进 content：`[评论《xx》] 正文` / `[转发自 某人《xx》] 正文` / `[转推自 某人] 正文`。
@@ -129,24 +145,25 @@
   const BOTTOM_SLACK = 40;    // 距底部多少像素以内算"在底部"
 
   /* ---------- 组件 ---------- */
-  function Card({ it, color, open, isNew, onToggle }) {
+  function Card({ it, color, open, isNew, onToggle, kw }) {
     const k = KINDS[it.kind] || KINDS["发帖"];
     const { ctx, body } = useMemo(() => splitCtx(it), [it]);
     const cls = ["card", open && "open", isNew && "new", it.kind === "追加" && "append"].filter(Boolean).join(" ");
     const style = color ? { "--uc": color } : undefined;
+    const titleTip = !open ? `${it.name} [${it.kind}] ${it.bar && it.bar !== "—" ? "· " + it.bar : ""}: ${it.content || ""}` : undefined;
     return html`
-      <div class=${cls} style=${style} tabIndex="0" onClick=${onToggle} data-key=${it.key}
+      <div class=${cls} style=${style} tabIndex="0" onClick=${onToggle} data-key=${it.key} title=${titleTip}
            onKeyDown=${e => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onToggle())}>
         <div class="stripe"/>
         <div class="body">
           <div class="head">
-            <span class="uname">${it.name}</span>
+            <span class="uname">${highlight(it.name, kw)}</span>
             <span class="pill" style=${{ "--kbg": k.bg, "--kfg": k.fg }}>${it.kind}</span>
-            ${it.bar && it.bar !== "—" && html`<span class="bar">${it.bar}</span>`}
+            ${it.bar && it.bar !== "—" && html`<span class="bar">${highlight(it.bar, kw)}</span>`}
             <time class="t" dateTime=${it.time}>${it.time.slice(11, 16)}</time>
           </div>
-          ${ctx && html`<div class="ctx">${ctx.label}${ctx.title && html`<b>《${ctx.title}》</b>`}</div>`}
-          <div class="txt">${body}</div>
+          ${ctx && html`<div class="ctx">${ctx.label}${ctx.title && html`<b>《${highlight(ctx.title, kw)}》</b>`}</div>`}
+          <div class="txt">${highlight(body, kw)}</div>
           ${open && html`
             <div class="foot">
               ${it.link && html`<a href=${it.link} target="_blank" rel="noopener" onClick=${e => e.stopPropagation()}>打开原帖 ↗</a>`}
@@ -157,7 +174,7 @@
       </div>`;
   }
 
-  function DateGroup({ date, list, isToday, collapsed, onToggle, colorOf, openKey, setOpenKey, newKeys }) {
+  function DateGroup({ date, list, isToday, collapsed, onToggle, colorOf, openKey, setOpenKey, newKeys, kw }) {
     return html`
       <section>
         <div class="dhead">
@@ -173,7 +190,7 @@
           <div class="cards">
             ${list.map(it => html`
               <${Card} key=${it.key} it=${it} color=${colorOf(it.name)} open=${openKey === it.key} isNew=${newKeys.has(it.key)}
-                       onToggle=${() => setOpenKey(k => (k === it.key ? null : it.key))}/>`)}
+                       kw=${kw} onToggle=${() => setOpenKey(k => (k === it.key ? null : it.key))}/>`)}
           </div>`}
       </section>`;
   }
@@ -182,68 +199,169 @@
     return msg ? html`<div class=${"toast" + (msg.kind === "error" ? " error" : "")} role="status">${msg.text}</div>` : null;
   }
 
-  function Drawer({ users, onClose, onSaved, toast }) {
-    const [pend, setPend] = useState(() => Object.fromEntries(users.map(u => [u.name, { ...u }])));
+  function Drawer({ users, config, onClose, onSaved, toast }) {
+    const [pend, setPend] = useState(() => Object.fromEntries(users.map(u => [String(u.uid), { ...u }])));
+    const [pollSec, setPollSec] = useState(config.poll_interval_seconds || 60);
+    const [appendSec, setAppendSec] = useState(config.append_check_interval_seconds || 300);
+    const [uidInput, setUidInput] = useState("");
+    const [nameInput, setNameInput] = useState("");
+    const [probing, setProbing] = useState(false);
+    const [adding, setAdding] = useState(false);
     const [saving, setSaving] = useState(false);
-    const upd = (nm, patch) => setPend(p => ({ ...p, [nm]: { ...p[nm], ...patch } }));
+
+    useEffect(() => {
+      setPend(Object.fromEntries(users.map(u => [String(u.uid), { ...u }])));
+    }, [users]);
+
+    const upd = (uid, patch) => setPend(p => ({ ...p, [uid]: { ...p[uid], ...patch } }));
+
     useEffect(() => {
       const h = e => e.key === "Escape" && onClose();
       window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h);
     }, [onClose]);
+
+    const probeUser = async () => {
+      const u = uidInput.trim();
+      if (!u || !/^\d+$/.test(u)) return toast("请输入合法的纯数字 UID", "error");
+      setProbing(true);
+      try {
+        const r = await fetch("/api/probe_user?uid=" + encodeURIComponent(u));
+        const d = await r.json();
+        if (!d.ok) throw new Error(d.error || "探测失败");
+        setNameInput(d.user.name || "");
+        toast("已获取到昵称: " + d.user.name);
+      } catch (e) {
+        toast("获取昵称失败：" + e.message, "error");
+      } finally { setProbing(false); }
+    };
+
+    const addUser = async () => {
+      const u = uidInput.trim();
+      if (!u || !/^\d+$/.test(u)) return toast("请输入合法的纯数字 UID", "error");
+      if (users.some(x => String(x.uid) === u)) return toast("该 UID 已经在关注列表中", "error");
+      setAdding(true);
+      try {
+        await post("/api/users/manage", {
+          action: "add",
+          user: { uid: u, name: nameInput.trim() || undefined }
+        });
+        toast("已成功添加关注用户");
+        setUidInput("");
+        setNameInput("");
+        onSaved && onSaved();
+      } catch (e) {
+        toast("添加失败：" + e.message, "error");
+      } finally { setAdding(false); }
+    };
+
+    const delUser = async (u) => {
+      if (!window.confirm("确定取消关注 " + u.name + " (" + u.uid + ")？")) return;
+      try {
+        await post("/api/users/manage", { action: "delete", uid: String(u.uid) });
+        toast("已取消关注 " + u.name);
+        onSaved && onSaved();
+      } catch (e) {
+        toast("删除失败：" + e.message, "error");
+      }
+    };
+
     const save = async () => {
       setSaving(true);
       try {
-        await post("/api/users", { users: Object.values(pend).map(u => ({
-          name: u.name, color: u.color || null, mute: !!u.mute, check_appends: !!u.check_appends })) });
-        toast("已保存用户设置");
+        await post("/api/users/manage", {
+          action: "update_all",
+          users: Object.values(pend).map(u => ({
+            uid: String(u.uid),
+            name: (u.name || "").trim(),
+            color: u.color || null,
+            mute: !!u.mute,
+            check_appends: !!u.check_appends
+          })),
+          config: {
+            poll_interval_seconds: Number(pollSec) || 60,
+            append_check_interval_seconds: Number(appendSec) || 300
+          }
+        });
+        toast("已保存用户设置与参数");
         onSaved && onSaved();
         onClose();
       } catch (e) {
         toast("保存失败：" + e.message, "error");
       } finally { setSaving(false); }
     };
+
     return html`
       <div class="scrim" onClick=${onClose}/>
       <aside class="drawer" role="dialog" aria-label="用户设置">
         <header>
           <div>
-            <h3>用户设置</h3>
-            <p>配色 · 静音 · 查追加 — 保存后立刻生效，不用重启</p>
+            <h3>用户设置与参数</h3>
+            <p>增删监控 · 配色 · 静音 · 查追加 · 轮询周期</p>
           </div>
           <span class="spacer"/>
           <button class="btn quiet" onClick=${onClose}>关闭</button>
         </header>
+
+        <div class="add-box">
+          <h4>+ 添加监控用户</h4>
+          <div class="add-form">
+            <input class="input-text uid-input" placeholder="输入用户数字 UID" value=${uidInput}
+                   onInput=${e => setUidInput(e.target.value)} onKeyDown=${e => e.key === "Enter" && probeUser()}/>
+            <button class="btn quiet" disabled=${probing} onClick=${probeUser}>${probing ? "检测中…" : "检测昵称"}</button>
+            <input class="input-text name-input" placeholder="备注名（选填）" value=${nameInput}
+                   onInput=${e => setNameInput(e.target.value)} onKeyDown=${e => e.key === "Enter" && addUser()}/>
+            <button class="btn primary" disabled=${adding} onClick=${addUser}>${adding ? "添加中…" : "确认添加"}</button>
+          </div>
+        </div>
+
         <div class="legend">
           ${PALETTE.map(([nm, hx]) => html`<span key=${hx}><i style=${{ "--c": hx }}/>${nm}</span>`)}
         </div>
+
         <div class="list">
           ${users.map(u => {
-            const p = pend[u.name];
+            const uidStr = String(u.uid);
+            const p = pend[uidStr] || u;
             return html`
-              <div class="srow" key=${u.uid + u.name} style=${p.color ? { "--uc": p.color } : undefined}>
-                <div class="who"><b>${u.name}</b><span>${u.uid}</span></div>
+              <div class="srow" key=${uidStr} style=${p.color ? { "--uc": p.color } : undefined}>
+                <div class="who">
+                  <input class="uname-edit" value=${p.name} title="点击直接修改备注名"
+                         onInput=${e => upd(uidStr, { name: e.target.value })}/>
+                  <span>${u.uid}</span>
+                </div>
                 <div class="swatches">
                   <button class=${"swatch none" + (!p.color ? " on" : "")} title="默认（按类型配色）"
-                          onClick=${() => upd(u.name, { color: null })}>默认</button>
+                          onClick=${() => upd(uidStr, { color: null })}>默认</button>
                   ${PALETTE.map(([nm, hx]) => html`
                     <button key=${hx} class=${"swatch" + ((p.color || "").toLowerCase() === hx.toLowerCase() ? " on" : "")} title=${nm}
-                            style=${{ "--c": hx }} onClick=${() => upd(u.name, { color: hx })}/>`)}
+                            style=${{ "--c": hx }} onClick=${() => upd(uidStr, { color: hx })}/>`)}
                 </div>
                 <div class="toggles">
-                  <label class=${"tg" + (p.mute ? " on" : "")} onClick=${() => upd(u.name, { mute: !p.mute })}><i/>静音</label>
+                  <label class=${"tg" + (p.mute ? " on" : "")} onClick=${() => upd(uidStr, { mute: !p.mute })}><i/>静音</label>
                   ${u.check_appends !== null && u.check_appends !== undefined && html`
-                    <label class=${"tg" + (p.check_appends ? " on" : "")} onClick=${() => upd(u.name, { check_appends: !p.check_appends })}><i/>查追加</label>`}
+                    <label class=${"tg" + (p.check_appends ? " on" : "")} onClick=${() => upd(uidStr, { check_appends: !p.check_appends })}><i/>查追加</label>`}
+                  <button class="btn-del" title="取消关注该用户" onClick=${() => delUser(u)}>${I.trash}</button>
                 </div>
               </div>`;
           })}
-          ${!users.length && html`<p class="empty">config.json 里还没有用户。</p>`}
+          ${!users.length && html`<p class="empty">暂未关注任何用户，请在上方输入 UID 添加。</p>`}
         </div>
+
+        <div class="cfg-box">
+          <h4>运行参数</h4>
+          <div class="cfg-row">
+            <label>轮询间隔: <input type="number" class="input-text" min="10" max="3600" value=${pollSec} onInput=${e => setPollSec(e.target.value)}/> 秒</label>
+            <label>查追加间隔: <input type="number" class="input-text" min="30" max="7200" value=${appendSec} onInput=${e => setAppendSec(e.target.value)}/> 秒</label>
+          </div>
+        </div>
+
         <footer>
           <button class="btn" onClick=${onClose}>取消</button>
-          <button class="btn primary" disabled=${saving} onClick=${save}>${saving ? "保存中…" : "保存"}</button>
+          <button class="btn primary" disabled=${saving} onClick=${save}>${saving ? "保存中…" : "保存设置"}</button>
         </footer>
       </aside>`;
   }
+
 
   function App() {
     const [s, dispatch] = useReducer(reducer, initial);
@@ -305,6 +423,43 @@
       const v = store.get("diting.rail", null);
       return v === null ? window.innerWidth < 900 : !!v;
     });
+    const [dense, setDense] = useState(() => store.get("diting.dense", false));
+    useEffect(() => store.set("diting.dense", dense), [dense]);
+    const toggleDense = () => setDense(d => !d);
+
+    const [query, setQuery] = useState("");
+    const [searchDb, setSearchDb] = useState(null);
+    const [searchBusy, setSearchBusy] = useState(false);
+    const searchInputRef = useRef(null);
+
+    useEffect(() => {
+      const h = e => {
+        if (e.key === "/" && document.activeElement && !["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) {
+          e.preventDefault();
+          searchInputRef.current && searchInputRef.current.focus();
+        }
+      };
+      window.addEventListener("keydown", h);
+      return () => window.removeEventListener("keydown", h);
+    }, []);
+
+    const doDbSearch = async () => {
+      const q = query.trim();
+      if (!q) return;
+      setSearchBusy(true);
+      try {
+        const r = await fetch("/api/search?q=" + encodeURIComponent(q) + "&limit=200");
+        const d = await r.json();
+        if (!d.ok) throw new Error(d.error || "搜索失败");
+        setSearchDb(d.items || []);
+        if (!(d.items || []).length) toast("未在历史库中找到关于 \"" + q + "\" 的动态");
+      } catch (e) {
+        toast("搜索失败: " + e.message, "error");
+      } finally { setSearchBusy(false); }
+    };
+
+    const clearSearch = () => { setQuery(""); setSearchDb(null); };
+
     const [openKey, setOpenKey] = useState(null);
     // 筛选：user 为 null 表示全部；kindOff 是被关掉的类型
     const [filter, setFilter] = useState(() => {
@@ -420,14 +575,33 @@
       for (const i of s.items) if (i.time.startsWith(td)) { m[i.name] = (m[i.name] || 0) + 1; all++; }
       return { m, all };
     }, [s.items, td]);
+
+    const activeQuery = query.trim();
     const shown = useMemo(() => s.items.filter(i => matches(i, filter)), [s.items, filter]);
+
+    const filteredShown = useMemo(() => {
+      if (searchDb !== null) return searchDb;
+      if (!activeQuery) return shown;
+      const q = activeQuery.toLowerCase();
+      return shown.filter(i =>
+        (i.content && i.content.toLowerCase().includes(q)) ||
+        (i.name && i.name.toLowerCase().includes(q)) ||
+        (i.bar && i.bar.toLowerCase().includes(q))
+      );
+    }, [searchDb, activeQuery, shown]);
+
     // 按日期分组，升序：旧日期在上、今天在最下面
     const groups = useMemo(() => {
       const g = new Map();
-      for (const i of shown) { const d = i.time.slice(0, 10) || "未知日期"; if (!g.has(d)) g.set(d, []); g.get(d).push(i); }
+      for (const i of filteredShown) {
+        const d = i.time.slice(0, 10) || "未知日期";
+        if (!g.has(d)) g.set(d, []);
+        g.get(d).push(i);
+      }
       return [...g.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-    }, [shown]);
-    const collapsedOf = d => (toggled.has(d) ? toggled.get(d) : d !== td);
+    }, [filteredShown]);
+
+    const collapsedOf = d => (activeQuery || searchDb !== null ? false : (toggled.has(d) ? toggled.get(d) : d !== td));
     const toggleDate = d => setToggled(m => { const n = new Map(m); n.set(d, !collapsedOf(d)); return n; });
     const setUser = u => setFilter(f => ({ ...f, user: f.user === u ? null : u }));
     const toggleKind = k => setFilter(f => { const n = new Set(f.kindOff); n.has(k) ? n.delete(k) : n.add(k); return { ...f, kindOff: n }; });
@@ -435,7 +609,7 @@
 
     const st = s.status;
     return html`
-      <div class=${"app" + (rail ? " rail" : "")}>
+      <div class=${"app" + (rail ? " rail" : "") + (dense ? " dense" : "")}>
         <header class="topbar">
           <div class="brand">
             <button class="iconbtn" title=${rail ? "展开侧栏" : "收起侧栏"} onClick=${() => setRail(r => !r)}>${I.menu}</button>
@@ -446,8 +620,24 @@
             <span class="lbl">${!s.connected ? "已断开" : st.running ? "运行中" : "已停止"}${st.last_check ? " · 上次检查" : ""}</span>
             ${st.last_check && html` <time>${st.last_check}</time>`}
           </div>
+
+          <div class="search-wrap">
+            <span class="search-icon">${I.search}</span>
+            <input ref=${searchInputRef} class="search-input" placeholder="搜索关键词、股票或博主... (/)"
+                   value=${query}
+                   onInput=${e => { setQuery(e.target.value); if (searchDb !== null) setSearchDb(null); }}
+                   onKeyDown=${e => {
+                     if (e.key === "Enter") doDbSearch();
+                     if (e.key === "Escape") { clearSearch(); searchInputRef.current && searchInputRef.current.blur(); }
+                   }}/>
+            ${query && html`<button class="search-clear" title="清空搜索 (Esc)" onClick=${clearSearch}>${I.x}</button>`}
+          </div>
+
           <span class="spacer"/>
           <div class="tb-actions">
+            <button class=${"btn quiet only-wide" + (dense ? " active" : "")} title=${dense ? "切到标准卡片模式" : "切到紧凑单行模式"} onClick=${toggleDense}>
+              ${dense ? I.cards : I.rows}
+            </button>
             <button class="btn" title=${st.running ? "停止监控" : "开始监控"} onClick=${act.toggleRun} disabled=${!s.connected}>
               ${st.running ? I.pause : I.play}<span class="lbl">${st.running ? "停止监控" : "开始监控"}</span>
             </button>
@@ -460,6 +650,7 @@
               <button class="btn quiet" title="更多" onClick=${e => { e.stopPropagation(); setMenu(m => !m); }}>${I.more}</button>
               ${menu && html`
                 <div class="menu" onClick=${e => e.stopPropagation()}>
+                  <button onClick=${() => { setMenu(false); toggleDense(); }}>${dense ? I.cards : I.rows}${dense ? "卡片模式" : "紧凑模式"}</button>
                   <button onClick=${() => { setMenu(false); act.test(); }}>${I.bell}测试通知</button>
                   <button onClick=${() => { setMenu(false); act.clear(); }}>${I.trash}清空列表</button>
                   <button onClick=${() => { setMenu(false); toggleTheme(); }}>${isDarkNow(theme) ? I.sun : I.moon}${isDarkNow(theme) ? "浅色模式" : "深色模式"}</button>
@@ -499,28 +690,39 @@
           </div>
           <div class="side-foot">
             轮询间隔 <b>${s.config.poll_interval_seconds || "—"} s</b> · 查追加 <b>${s.config.append_check_interval_seconds || "—"} s</b><br/>
-            列表 <b>${s.items.length.toLocaleString()}</b> 条${filtering ? html`，显示 <b>${shown.length}</b>` : ""}
+            列表 <b>${s.items.length.toLocaleString()}</b> 条${filtering ? html`，显示 <b>${filteredShown.length}</b>` : ""}
           </div>
         </nav>
 
         <main class="main" ref=${mainRef}>
           ${s.loaded && !s.connected && !s.quit && html`<div class="banner">已与后台断开，正在重连…（重连后会自动补齐漏掉的动态）</div>`}
           <div class="feed">
+            ${searchDb !== null && html`
+              <div class="search-banner">
+                <span>在历史数据库中找到 <b>${searchDb.length}</b> 条关于 "<b>${query}</b>" 的记录</span>
+                <button class="btn quiet" onClick=${clearSearch}>返回全部动态</button>
+              </div>`}
+            ${searchDb === null && activeQuery && html`
+              <div class="search-banner">
+                <span>当前已加载列表中匹配到 <b>${filteredShown.length}</b> 条关于 "<b>${query}</b>" 的动态</span>
+                <button class="btn quiet" disabled=${searchBusy} onClick=${doDbSearch}>${searchBusy ? "检索中…" : "检索全库历史 ↵"}</button>
+              </div>`}
+
             ${!s.loaded && html`<p class="empty">${st.text}</p>`}
-            ${s.loaded && s.hasMore && html`
+            ${s.loaded && s.hasMore && searchDb === null && !activeQuery && html`
               <div class="older">
                 <button class="btn quiet" disabled=${olderBusy} onClick=${loadOlder}>${olderBusy ? "加载中…" : "加载更早的记录"}</button>
               </div>`}
             ${groups.map(([d, list]) => html`
               <${DateGroup} key=${d} date=${d} list=${list} isToday=${d === td} collapsed=${collapsedOf(d)}
-                            onToggle=${() => toggleDate(d)} colorOf=${colorOf} openKey=${openKey} setOpenKey=${setOpenKey} newKeys=${newKeys}/>`)}
+                            onToggle=${() => toggleDate(d)} colorOf=${colorOf} openKey=${openKey} setOpenKey=${setOpenKey} newKeys=${newKeys} kw=${activeQuery}/>`)}
             ${s.loaded && !s.items.length && html`<p class="empty">还没有任何动态。</p>`}
-            ${s.loaded && s.items.length > 0 && !shown.length && html`<p class="empty">当前筛选下没有动态。<button class="link" onClick=${() => setFilter({ user: null, kindOff: new Set() })}>清除筛选</button></p>`}
+            ${s.loaded && s.items.length > 0 && !filteredShown.length && html`<p class="empty">当前筛选/搜索下没有动态。<button class="link" onClick=${() => { clearSearch(); setFilter({ user: null, kindOff: new Set() }); }}>清除筛选与搜索</button></p>`}
           </div>
           ${pendingBelow > 0 && html`<button class="fab" onClick=${() => scrollToBottom(true)}>${I.down}<span>${pendingBelow} 条新动态</span></button>`}
         </main>
 
-        ${drawer && html`<${Drawer} users=${s.users} onClose=${() => setDrawer(false)} toast=${toast}/>`}
+        ${drawer && html`<${Drawer} users=${s.users} config=${s.config} onClose=${() => setDrawer(false)} onSaved=${() => fetchSnapshot(dispatch).catch(() => {})} toast=${toast}/>`}
         <${Toast} msg=${msg}/>
         ${s.quit && html`
           <div class="scrim quit">
@@ -533,4 +735,5 @@
   }
 
   ReactDOM.createRoot(document.getElementById("root")).render(html`<${App}/>`);
+
 })();

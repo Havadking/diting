@@ -255,6 +255,98 @@
     background: var(--ink); color: var(--bg); box-shadow: var(--shadow-lg); font-size: 13px;
   }
 
+  /* ---------- 紧凑单行模式 (Dense Mode) ---------- */
+  .dense .cards { gap: 3px; }
+  .dense .card {
+    border-radius: 6px; box-shadow: none;
+    transition: background-color .1s, border-color .1s;
+  }
+  .dense .card:not(.open) {
+    display: flex; align-items: center; min-height: 30px;
+  }
+  .dense .card:not(.open) .stripe {
+    width: 3px; align-self: stretch; flex-shrink: 0;
+  }
+  .dense .card:not(.open) .body {
+    padding: 3px 10px; display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;
+  }
+  .dense .card:not(.open) .head {
+    display: inline-flex; align-items: center; gap: 6px; margin-bottom: 0; flex-shrink: 0;
+  }
+  .dense .card:not(.open) .uname {
+    font-size: 13px; font-weight: 600;
+  }
+  .dense .card:not(.open) .pill {
+    height: 18px; padding: 0 5px; font-size: 11px; border-radius: 4px;
+  }
+  .dense .card:not(.open) .bar {
+    font-size: 12px;
+  }
+  .dense .card:not(.open) .ctx {
+    margin-bottom: 0; font-size: 11px; padding: 1px 5px; flex-shrink: 0; height: 18px;
+    max-width: 180px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  }
+  .dense .card:not(.open) .txt {
+    font-size: 13px; line-height: 1.4; color: var(--ink-2);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: none;
+    flex: 1; min-width: 0; display: block;
+  }
+  .dense .card:not(.open) .t {
+    font-size: 11px; margin-left: 6px; flex-shrink: 0;
+  }
+  .dense .card:not(.open).new .body::after {
+    position: static; font-size: 10px; line-height: 14px; padding: 0 3px; margin-left: 4px; flex-shrink: 0;
+  }
+  .dense .card:not(.open).new .t {
+    margin-right: 0;
+  }
+  .dense .card.open {
+    padding: 2px 0;
+  }
+  .dense .card.open .body {
+    padding: 8px 14px 10px 12px;
+  }
+  .dense .card.open .txt {
+    font-size: 13.5px;
+  }
+
+  /* ---------- 搜索栏 ---------- */
+  .search-wrap {
+    position: relative; display: flex; align-items: center;
+    max-width: 260px; width: 100%; margin: 0 8px;
+  }
+  .search-wrap svg.search-icon {
+    position: absolute; left: 9px; width: 14px; height: 14px; color: var(--ink-3); pointer-events: none;
+  }
+  .search-input {
+    width: 100%; height: 32px; padding: 0 28px 0 28px;
+    border-radius: 8px; border: 1px solid var(--line); background: var(--bg);
+    color: var(--ink); font-size: 12.5px; transition: border-color .12s, background .12s, box-shadow .12s;
+  }
+  .search-input:focus {
+    outline: none; border-color: var(--accent); background: var(--card);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
+  }
+  .search-input::placeholder { color: var(--ink-3); }
+  .search-clear {
+    position: absolute; right: 4px; width: 22px; height: 22px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 4px; color: var(--ink-3); cursor: pointer;
+  }
+  .search-clear:hover { color: var(--ink); background: var(--line); }
+  .search-clear svg { width: 12px; height: 12px; }
+  .search-banner {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 8px 14px; margin-bottom: 12px; border-radius: 8px;
+    background: var(--card); border: 1px solid var(--line); font-size: 13px; color: var(--ink-2);
+  }
+  .search-banner b { color: var(--ink); }
+  mark.kw {
+    background: color-mix(in srgb, var(--warn) 35%, transparent);
+    color: inherit; border-radius: 2px; padding: 0 1px; font-weight: 500;
+  }
+
+
   /* ---------- 设置抽屉 ---------- */
   .scrim { position: fixed; inset: 0; background: rgba(10, 14, 22, .32); z-index: 10; }
   .drawer {
@@ -287,6 +379,41 @@
   .legend span { display: inline-flex; align-items: center; gap: 5px; }
   .legend i { width: 10px; height: 10px; border-radius: 3px; background: var(--c); }
 
+  .add-box {
+    margin: 10px 24px 6px; padding: 12px 14px; border-radius: 8px;
+    background: var(--bg); border: 1px solid var(--line);
+  }
+  .add-box h4 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--ink); }
+  .add-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .input-text {
+    height: 30px; padding: 0 10px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--card);
+    color: var(--ink); font-size: 12.5px;
+  }
+  .input-text:focus { outline: none; border-color: var(--accent); }
+  .input-text.uid-input { width: 150px; font-family: var(--mono); }
+  .input-text.name-input { width: 130px; }
+  .cfg-box {
+    margin: 10px 24px 4px; padding: 12px 14px; border-radius: 8px;
+    background: var(--bg); border: 1px solid var(--line);
+  }
+  .cfg-box h4 { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--ink); }
+  .cfg-row { display: flex; gap: 16px; align-items: center; font-size: 12.5px; color: var(--ink-2); flex-wrap: wrap; }
+  .cfg-row label { display: inline-flex; align-items: center; gap: 6px; }
+  .cfg-row input { width: 68px; }
+  .btn-del {
+    width: 26px; height: 26px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center;
+    color: var(--ink-3); transition: color .12s, background .12s; border: none; background: none; cursor: pointer;
+  }
+  .btn-del:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
+  .btn-del svg { width: 14px; height: 14px; }
+  .uname-edit {
+    font-weight: 600; color: var(--uc, var(--ink)); font-size: 13px; width: 100px;
+    border: 1px solid transparent; border-radius: 4px; padding: 2px 4px; background: none;
+  }
+  .uname-edit:focus { border-color: var(--accent); background: var(--card); outline: none; }
+
+
   /* ---------- 断线横幅 / 加载更早 ---------- */
   .banner {
     position: sticky; top: 0; z-index: 4; text-align: center; padding: 7px 12px; font-size: 12.5px;
@@ -309,5 +436,16 @@
   .btn:disabled { opacity: .5; cursor: default; }
 
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
-  @media (max-width: 900px) { .feed { padding: 8px 14px 80px; } .card .body { padding: 10px 12px 11px 12px; } }
-  @media (max-width: 560px) { .drawer { width: 100vw; } .srow { grid-template-columns: 1fr; gap: 8px; } }
+  @media (max-width: 900px) {
+    .feed { padding: 8px 14px 80px; }
+    .card .body { padding: 10px 12px 11px 12px; }
+    .search-wrap { max-width: 170px; }
+  }
+  @media (max-width: 560px) {
+    .drawer { width: 100vw; }
+    .srow { grid-template-columns: 1fr; gap: 8px; }
+    .search-wrap { max-width: 130px; }
+    .add-form { flex-direction: column; align-items: stretch; }
+    .input-text.uid-input, .input-text.name-input { width: 100%; }
+  }
+

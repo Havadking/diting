@@ -167,6 +167,23 @@ class MonitorCore:
         finally:
             db.close()
 
+    def search(self, keyword, limit=100):
+        """「全库搜索」：从 messages.db 检索关键词匹配的条目。HTTP 线程调用，独立短连接。"""
+        try:
+            db = monitor.get_db()
+        except Exception:
+            return []
+        try:
+            return monitor.search_messages(db, keyword, limit)
+        except Exception:
+            return []
+        finally:
+            db.close()
+
+    def probe_user(self, uid):
+        return monitor.probe_guba_user(uid)
+
+
     # ---------- 历史 ----------
     def _load_history_from_db(self):
         """启动时先把 SQLite 里存过的消息直接铺进列表(不弹通知)，再由后台线程去拉新的。
@@ -296,6 +313,94 @@ class MonitorCore:
         self.refresh_config_maps()
         self._broadcast("config", {"users": self.list_users()})
         return None
+
+    def manage_config(self, body):
+        """统一用户与运行参数管理：add（新增）/ delete（删除）/ update_all（批量更新设置+参数）。"""
+        action = body.get("action")
+        try:
+            cfg = monitor.load_config()
+        except Exception as e:
+            return "读取 config.json 失败：%s" % e
+
+        if action == "add":
+            u = body.get("user") or {}
+            uid = str(u.get("uid") or "").strip()
+            if not uid or not uid.isdigit():
+                return "UID 必须是纯数字"
+            users = cfg.get("users", [])
+            if any(str(x.get("uid")) == uid for x in users):
+                return "该用户（UID: %s）已在监控列表中" % uid
+            new_user = {
+                "uid": uid,
+                "name": (u.get("name") or ("股友" + uid[-4:])).strip()
+            }
+            if u.get("color"):
+                new_user["color"] = u["color"]
+            if u.get("mute"):
+                new_user["mute"] = True
+            if u.get("check_appends"):
+                new_user["check_appends"] = True
+            users.append(new_user)
+            cfg["users"] = users
+
+        elif action == "delete":
+            uid = str(body.get("uid") or (body.get("user") or {}).get("uid") or "").strip()
+            if not uid:
+                return "未指定要删除的用户 UID"
+            users = cfg.get("users", [])
+            cfg["users"] = [x for x in users if str(x.get("uid")) != uid]
+
+        elif action == "update_all":
+            patch = body.get("users") or []
+            by_uid = {str(p.get("uid")): p for p in patch if isinstance(p, dict) and p.get("uid")}
+            sources = [cfg.get("users", []) or []]
+            if ENABLE_TWITTER:
+                sources.append(cfg.get("twitter_users", []) or [])
+            if ENABLE_WEIBO:
+                sources.append(cfg.get("weibo_users", []) or [])
+            for i, u_list in enumerate(sources):
+                for u in u_list:
+                    uid = str(u.get("uid") or u.get("handle") or "")
+                    p = by_uid.get(uid)
+                    if not p:
+                        continue
+                    if p.get("name"):
+                        u["name"] = p["name"].strip()
+                    if p.get("color"):
+                        u["color"] = p["color"]
+                    else:
+                        u.pop("color", None)
+                    if p.get("mute"):
+                        u["mute"] = True
+                    else:
+                        u.pop("mute", None)
+                    if i == 0:
+                        if p.get("check_appends"):
+                            u["check_appends"] = True
+                        else:
+                            u.pop("check_appends", None)
+            c = body.get("config") or {}
+            if "poll_interval_seconds" in c:
+                try:
+                    cfg["poll_interval_seconds"] = max(10, min(3600, int(c["poll_interval_seconds"])))
+                except (ValueError, TypeError):
+                    pass
+            if "append_check_interval_seconds" in c:
+                try:
+                    cfg["append_check_interval_seconds"] = max(30, min(7200, int(c["append_check_interval_seconds"])))
+                except (ValueError, TypeError):
+                    pass
+        else:
+            return "未知操作 action=%s" % action
+
+        try:
+            monitor.save_config(cfg)
+        except Exception as e:
+            return "保存 config.json 失败：%s" % e
+        self.refresh_config_maps()
+        self._broadcast("config", {"users": self.list_users(), "config": self.poll_config()})
+        return None
+
 
     def poll_config(self):
         """前端要展示的轮询参数。读配置失败给默认值。"""

@@ -129,23 +129,71 @@ class MockCore(core.MonitorCore):
         pool = [e for e in self._older() if (e["time"], e["key"]) < (before_time, before_key)]
         return pool[-limit:] if limit else pool
 
-    def save_users(self, patch):
-        by_name = {u["name"]: u for u in (patch or []) if isinstance(u, dict) and u.get("name")}
-        for u in USERS:
-            p = by_name.get(u["name"])
-            if not p:
-                continue
-            for k in ("color", "mute", "check_appends"):
-                if p.get(k):
-                    u[k] = p[k]
-                else:
-                    u.pop(k, None)
+    def search(self, keyword, limit=100):
+        kw = (keyword or "").strip().lower()
+        if not kw:
+            return []
+        all_items = self._older() + self.items
+        matched = [e for e in all_items if kw in e.get("content", "").lower()
+                   or kw in e.get("name", "").lower()
+                   or kw in e.get("bar", "").lower()]
+        matched.sort(key=lambda x: (x["time"], x["key"]))
+        return matched[-limit:] if limit else matched
+
+    def probe_user(self, uid):
+        uid = str(uid).strip()
+        if not uid or not uid.isdigit():
+            raise ValueError("UID 必须是纯数字")
+        return {"uid": uid, "name": "模拟用户_" + uid[-4:]}
+
+    def manage_config(self, body):
+        global USERS
+        action = body.get("action")
+        if action == "add":
+            u = body.get("user") or {}
+            uid = str(u.get("uid") or "").strip()
+            if not uid or not uid.isdigit():
+                return "UID 必须是纯数字"
+            if any(str(x.get("uid")) == uid for x in USERS):
+                return "该用户（UID: %s）已在监控列表中" % uid
+            new_u = {"uid": uid, "name": u.get("name") or ("模拟用户_" + uid[-4:])}
+            if u.get("color"): new_u["color"] = u["color"]
+            if u.get("mute"): new_u["mute"] = True
+            if u.get("check_appends"): new_u["check_appends"] = True
+            USERS.append(new_u)
+        elif action == "delete":
+            uid = str(body.get("uid") or (body.get("user") or {}).get("uid") or "").strip()
+            USERS = [x for x in USERS if str(x.get("uid")) != uid]
+        elif action == "update_all":
+            patch = body.get("users") or []
+            by_uid = {str(p.get("uid")): p for p in patch if isinstance(p, dict) and p.get("uid")}
+            for u in USERS:
+                p = by_uid.get(str(u.get("uid")))
+                if not p:
+                    continue
+                if p.get("name"): u["name"] = p["name"].strip()
+                if p.get("color"): u["color"] = p["color"]
+                else: u.pop("color", None)
+                if p.get("mute"): u["mute"] = True
+                else: u.pop("mute", None)
+                if p.get("check_appends"): u["check_appends"] = True
+                else: u.pop("check_appends", None)
+            c = body.get("config") or {}
+            if "poll_interval_seconds" in c:
+                try: self.interval = max(2, min(3600, int(c["poll_interval_seconds"])))
+                except (ValueError, TypeError): pass
+        else:
+            return "未知操作 action=%s" % action
         self.refresh_config_maps()
-        self._broadcast("config", {"users": self.list_users()})
+        self._broadcast("config", {"users": self.list_users(), "config": self.poll_config()})
         return None
+
+    def save_users(self, patch):
+        return self.manage_config({"action": "update_all", "users": patch})
 
     def test_toast(self):
         self.set_status("（演示模式）假装弹了一条测试通知。")
+
 
     def list_users(self):
         return [{"name": u["name"], "uid": u["uid"], "color": u.get("color"),

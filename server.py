@@ -101,6 +101,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._api_snapshot(parse_qs(u.query))
         if path == "/api/items":
             return self._api_items(parse_qs(u.query))
+        if path == "/api/search":
+            return self._api_search(parse_qs(u.query))
+        if path == "/api/probe_user":
+            return self._api_probe_user(parse_qs(u.query))
         if path == "/api/events":
             return self._api_events()
         self._send_error_json(HTTPStatus.NOT_FOUND, "not found")
@@ -118,7 +122,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._api_control(body)
         if path == "/api/users":
             return self._api_users(body)
+        if path == "/api/users/manage":
+            return self._api_users_manage(body)
         self._send_error_json(HTTPStatus.NOT_FOUND, "not found")
+
 
     def _origin_ok(self):
         origin = self.headers.get("Origin", "")
@@ -171,6 +178,23 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json({"ok": False, "error": err}, HTTPStatus.INTERNAL_SERVER_ERROR)
         self._send_json({"ok": True})
 
+    def _api_users_manage(self, body):
+        err = self.core.manage_config(body)
+        if err:
+            return self._send_json({"ok": False, "error": err}, HTTPStatus.BAD_REQUEST)
+        self._send_json({"ok": True})
+
+    def _api_probe_user(self, qs):
+        uid = (qs.get("uid") or [""])[0].strip()
+        if not uid:
+            return self._send_error_json(HTTPStatus.BAD_REQUEST, "uid required")
+        try:
+            info = self.core.probe_user(uid)
+            self._send_json({"ok": True, "user": info})
+        except Exception as e:
+            self._send_json({"ok": False, "error": str(e)})
+
+
     # ---- 静态文件 ----
     def _serve_static(self, rel):
         if not os.path.isdir(WEB_DIR):
@@ -201,6 +225,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_error_json(HTTPStatus.BAD_REQUEST, "before required")
         rows = self.core.load_older(before, before_key, limit)
         self._send_json({"items": rows, "has_more": len(rows) >= limit})
+
+    def _api_search(self, qs):
+        """「全库搜索」：从数据库中检索匹配的动态。"""
+        q = (qs.get("q") or [""])[0].strip()
+        if not q:
+            return self._send_error_json(HTTPStatus.BAD_REQUEST, "q required")
+        limit = _int_arg(qs, "limit", 100, 1, 500)
+        rows = self.core.search(q, limit)
+        self._send_json({"ok": True, "items": rows, "count": len(rows)})
+
 
     def _api_events(self):
         core = self.core
