@@ -19,7 +19,7 @@ python test_once.py      # 抓取自检：打印 config.json 里第一个股吧�
 没有构建步骤、没有 lint 配置、**没有测试框架**。验证改动的手段：
 
 ```bash
-python -c "import py_compile; py_compile.compile('app.py', doraise=True)"   # 语法检查
+python -c "import py_compile; py_compile.compile('app.py', doraise=True); py_compile.compile('core.py', doraise=True)"   # 语法检查
 ```
 
 `test_once.py` 只覆盖股吧抓取，且需要真实的 `config.json`（含真实 UID）才能跑。
@@ -29,10 +29,15 @@ python -c "import py_compile; py_compile.compile('app.py', doraise=True)"   # �
 改动 `app.py` 的展示逻辑时，不要靠真实联网监控来验证（慢且要等新动态）。用 monkeypatch 跳过配置和联网，手工灌假数据后截图：
 
 ```python
+monitor.DB_PATH = <临时文件>; monitor.STATE_PATH = <临时文件>   # 别碰真实 messages.db
+monitor.load_config = lambda: {"users": [...]}              # 跳过 config.json（要在 import app 之前）
 appmod.MonitorApp.start = lambda self, silent=False: None   # 跳过联网监控
-appmod.monitor.load_config = lambda: {"users": [...]}       # 跳过 config.json
-# 然后 a._add_item(name, fake_item) 若干次 → a._rebuild() → PIL ImageGrab 截图
+# 然后 a.core._add_item(name, fake_item, None) 若干次 → a._rebuild() → PIL ImageGrab 截图
+# 要测快速追加路径：e = a.core._add_item(...); a.core._broadcast("new", [e]); root.update()
 ```
+
+验证 `core.py` 的行为（首轮基线 / 去重 / 静音 / 停止）同理：把 `monitor.collect_items` 换成假函数、
+`core.random.uniform` 换成常量跳过用户间等待，`subscribe()` 一个队列断言收到的事件序列。
 
 `config.json` 不在版本库里（含真实 UID/Cookie），所以开发环境通常**没有**这个文件，任何调用 `monitor.load_config()` 的代码路径都会 `sys.exit(1)`。
 
@@ -40,10 +45,11 @@ appmod.monitor.load_config = lambda: {"users": [...]}       # 跳过 config.json
 
 ### 两个入口，能力不对等
 
-- **`app.py`** — 桌面 GUI，主要维护对象。三个数据源全支持。
-- **`monitor.py`** — 双重身份：① 被 `app.py` import 的抓取/解析核心；② 独立的命令行推送版（`main()`）。注意 **`monitor.py` 的命令行 `main()` 只处理股吧用户**，推特/微博是 GUI 独有的。改抓取逻辑时两边都受影响，改轮询逻辑时通常只动 `app.py`。
+- **`core.py`** — `MonitorCore`：后台轮询线程、首轮基线/去重、追加监视、静音/合并/toast、写 `messages.db`、事件广播。**无 UI 依赖，不许 import tkinter**。三个数据源全支持。
+- **`app.py`** — tkinter 桌面 GUI，只是 `MonitorCore` 的一层壳：`subscribe()` 一个队列，消费 `("history"|"new"|"status"|"cleared", payload)` 事件画 Treeview。网页版（`server.py`，规划中，见 `docs/web-design.md`）是另一层壳。
+- **`monitor.py`** — 双重身份：① 被 `core.py` import 的抓取/解析核心；② 独立的命令行推送版（`main()`）。注意 **`monitor.py` 的命令行 `main()` 只处理股吧用户**，推特/微博是 GUI 独有的。改抓取逻辑时两边都受影响，改轮询逻辑时通常只动 `core.py`。
 
-`app.py` 顶部的 `ENABLE_TWITTER` / `ENABLE_WEIBO` 目前是 `False`——推特/微博功能暂时下线（不轮询、UI 也不提），但代码和 `monitor.py` 里的抓取逻辑都完整保留，改成 `True` 即可恢复。改 `app.py` 里任何"用户列表"相关的地方（`_run_loop`、`_refresh_user_label`、`open_colors` 的 `rows`/`editable_users`）时留意这两个开关，别让隐藏的来源重新泄漏到 UI，也别让 `open_colors` 的保存逻辑遍历到没渲染出来的用户而误清空他们的配置。
+`core.py` 顶部的 `ENABLE_TWITTER` / `ENABLE_WEIBO` 目前是 `False`——推特/微博功能暂时下线（不轮询、UI 也不提），但代码和 `monitor.py` 里的抓取逻辑都完整保留，改成 `True` 即可恢复。改任何"用户列表"相关的地方（`core.py` 的 `_run_loop`/`describe_config`、`app.py` `open_colors` 的 `rows`/`editable_users`）时留意这两个开关，别让隐藏的来源重新泄漏到 UI，也别让 `open_colors` 的保存逻辑遍历到没渲染出来的用户而误清空他们的配置。
 
 ### 统一 item 字典是跨文件契约
 
@@ -55,7 +61,7 @@ key, kind, icon, time, title, content, bar, ctx_user, ctx_text, link
 
 两个**载荷性约定**，改动时容易踩：
 
-1. **`kind` 是中文字符串字面量**，且被当作 dict 键在两个文件里跨文件使用（`app.py` 的 `KIND_BG`、`_resolve_fg`，`monitor.py` 的 `build_message`）。取值：`发帖` / `转发` / `评论`（股吧、微博）、`推文` / `转推`（推特）、`追加`（`monitor.parse_post_appends()`，见下方「帖子追加检查」）。新增来源必须复用这些字符串，否则配色和通知文案会静默失配。
+1. **`kind` 是中文字符串字面量**，且被当作 dict 键在两个文件里跨文件使用（`core.py` 的 `KIND_BG`、`app.py` 的 `_resolve_fg`，`monitor.py` 的 `build_message`）。取值：`发帖` / `转发` / `评论`（股吧、微博）、`推文` / `转推`（推特）、`追加`（`monitor.parse_post_appends()`，见下方「帖子追加检查」）。新增来源必须复用这些字符串，否则配色和通知文案会静默失配。
 2. **`time` 必须是 `YYYY-MM-DD HH:MM:SS` 格式**。`app.py` 直接对字符串做切片（`it["time"][:10]` 取日期分组、`it["time"][11:16]` 取显示时间）并按字符串排序，格式不对会导致分组和排序错乱。推特走 `_norm_time()`、微博走 `_parse_weibo_time()` 做归一化。
 
 `key` 带来源前缀去重：`P`(帖) / `R`(回复) / `T`(推文) / `W`(微博) / `A`(帖子追加)。
@@ -64,30 +70,30 @@ key, kind, icon, time, title, content, bar, ctx_user, ctx_text, link
 
 `state.json` 记录每个来源已见过的 `key`（每来源保留最近 500 条）。skey 命名：股吧用裸 uid，推特 `tw:<handle>`，微博 `wb:<uid>`。
 
-`app.py` 的 `_emit()` 实现关键语义：**每个来源第一次抓取成功**时，把结果当基线塞进列表但**不弹通知**（避免启动刷屏），之后才提示新增。按来源分别 seed（`self._seeded`）是有意为之——历史上曾因全局单一 seed 标志，导致某个来源开机时抓取失败就永远不显示（见 commit 7a3d470）。
+`core.py` 的 `_emit()` 实现关键语义：**每个来源第一次抓取成功**时，把结果当基线塞进列表但**不弹通知**（避免启动刷屏），之后才提示新增。按来源分别 seed（`self._seeded`）是有意为之——历史上曾因全局单一 seed 标志，导致某个来源开机时抓取失败就永远不显示（见 commit 7a3d470）。
 
 注意 `monitor.py` 的 `check_user()` 有一套**独立实现**的相同语义（用 `uid not in state` 判首次），两者共享同一个 `state.json`。
 
 ### 消息持久化（SQLite）
 
-`state.json` 只存去重用的 `key` 列表，不存消息内容——真正的消息内容存在 `monitor.py` 的 `messages.db`（`get_db()`/`save_message()`/`load_recent_messages()`），表结构就是 `app.py` `self.items` 那种已经处理好的展示字段（`content` 已经拼好「评论于/转发自」前缀），不是 `monitor.py` 解析函数的原始字段，所以直接读出来就能塞回列表，不用重新处理。
+`state.json` 只存去重用的 `key` 列表，不存消息内容——真正的消息内容存在 `monitor.py` 的 `messages.db`（`get_db()`/`save_message()`/`load_recent_messages()`），表结构就是 `core.items` 那种已经处理好的展示字段（`content` 已经拼好「评论于/转发自」前缀），不是 `monitor.py` 解析函数的原始字段，所以直接读出来就能塞回列表，不用重新处理。
 
-只在 `app.py` 主线程读写（启动时 `_load_history_from_db()` 读，`_add_item()` 里写），没开 `check_same_thread=False`，**不要**从 `_run_loop` 那个后台线程直接碰这个连接。`monitor.py` 的独立命令行版目前不写这个库。
+连接归属：**后台抓取线程独占写连接**（`_run_loop` 开头 `get_db()`、`finally` 里关，`_add_item()` 用它写）；启动时 `MonitorCore._load_history_from_db()` 用一个独立短连接读完即关。没开 `check_same_thread=False`，所以别跨线程传连接对象。UI 壳层完全不碰 SQLite，只读内存里的 `core.items`（要拿 `core.lock`）。`monitor.py` 的独立命令行版目前不写这个库。
 
 ### 帖子追加检查
 
 东方财富股吧允许作者在原帖发布后继续「追加」内容（前端显示成"作者更新以下内容"），但这部分文字**不在** `userdynamiclistv2` 列表接口的 `post_content` 字段里，只存在于帖子详情页 `guba.eastmoney.com/news,{code},{post_id}.html` 内嵌的 `var post_article={...};` JSON 里的 `post_add_list` 数组。`monitor.parse_post_appends(code, post_id)` 专门请求这个详情页，用 `_extract_js_object()` 手动配平大括号把这段 JSON 抠出来（正则的非贪婪匹配处理不了嵌套 JSON，见函数内注释）。`monitor.parse_news_link(link)` 从统一 item 的 `link` 字段反解出 `(code, post_id)`，避免给统一 item 字典再加新字段。
 
-只对用户在「用户设置」里勾了 `check_appends: true` 的股吧用户生效（推特/微博没有这个概念）。监视逻辑全在 `app.py` 后台线程 `_run_loop` 里，**故意不落盘**：
+只对用户在「用户设置」里勾了 `check_appends: true` 的股吧用户生效（推特/微博没有这个概念）。监视逻辑全在 `core.py` 后台线程 `_run_loop` 里，**故意不落盘**：
 
 - `self._append_watch`：`{post_id: {"uid","code","name","expires_at"}}`，只有后台线程会碰它，不用加锁。`_register_append_watch()` 把发布在 24 小时内的帖子登记进去；`_check_append_watch()` 定期（`append_check_interval_seconds`，默认 300 秒）挨个请求详情页，查到追加就用 `_emit()` 走跟其它来源一样的去重/首轮基线/通知流程（skey 是 `"ap:" + post_id`），并把 `expires_at` 顺延 24 小时；查不到就让它自然过期、下一轮被清掉。
 - 重启会清空这张表——不是 bug，是有意简化：下次轮询重新拉到该用户的帖子时，只要还在"发布 24 小时内"就会被重新登记，不需要额外持久化这份运行时调度状态。真正的追加内容一旦查到，会像其它动态一样存进 `messages.db`，不会因为重启丢失。
 
-**详情页接口比列表接口(`userdynamiclistv2`)更容易触发东财反爬验证**（实测踩过：连续调过几次详情页后，同一个 IP 请求任何帖子详情页都会被拦成验证页而不是真实内容）。`parse_post_appends()` 识别出验证页特征（`fd_guba_validate`/`em_capt.js`）就主动抛异常，不会把验证页误当成"没有追加"。`app.py` 的 `_check_append_watch()` 配了失败退避：`self._append_fail_streak` 记连续失败次数，`_append_backoff_interval()` 让下次检查间隔按 `base * 2^streak` 翻倍拉长（封顶 2 小时），一旦有一轮成功就清零回到 `append_check_interval_seconds` 配的正常间隔。退避只作用于"查追加"这一个独立节奏，不影响股吧/推特/微博的正常轮询。
+**详情页接口比列表接口(`userdynamiclistv2`)更容易触发东财反爬验证**（实测踩过：连续调过几次详情页后，同一个 IP 请求任何帖子详情页都会被拦成验证页而不是真实内容）。`parse_post_appends()` 识别出验证页特征（`fd_guba_validate`/`em_capt.js`）就主动抛异常，不会把验证页误当成"没有追加"。`core.py` 的 `_check_append_watch()` 配了失败退避：`self._append_fail_streak` 记连续失败次数，`_append_backoff_interval()` 让下次检查间隔按 `base * 2^streak` 翻倍拉长（封顶 2 小时），一旦有一轮成功就清零回到 `append_check_interval_seconds` 配的正常间隔。退避只作用于"查追加"这一个独立节奏，不影响股吧/推特/微博的正常轮询。
 
 ### 线程模型
 
-`app.py` 单后台线程 `_run_loop()` 轮询，通过 `queue.Queue` 把 `("status"|"history"|"new", ...)` 事件传给主线程，主线程 `_poll_queue()` 每 400ms 消费一次并重建列表。**所有 tkinter 调用必须在主线程**。
+`core.py` 单后台线程 `_run_loop()` 轮询，处理完的条目（已入 `core.items`、已写库、已弹通知）通过 `_broadcast()` 推给所有订阅者队列（`subscribe()` 拿，满 200 条丢最旧的）。事件形状：`("history"|"new", [entry...])`、`("status", {text, running, last_check})`、`("cleared", {})`。`app.py` 主线程 `_poll_queue()` 每 400ms 消费一次并渲染。**所有 tkinter 调用必须在主线程**；`core.items` 在后台线程被追加/裁剪（`MAX_ROWS`），壳层读它要拿 `core.lock` 拷一份。
 
 `start()` 里先 join 旧线程、再给新线程一个全新的 `threading.Event`，是为修历史上的重复推送竞态（commit be583e0）——改动启停逻辑时别退化。
 

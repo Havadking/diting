@@ -11,6 +11,7 @@
 !/LICENSE
 !/requirements.txt
 !/app.py
+!/core.py
 !/monitor.py
 !/test_once.py
 !/run.bat

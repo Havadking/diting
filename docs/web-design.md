@@ -71,7 +71,8 @@ class MonitorCore:
     running: bool
     _subs: list[queue.Queue]     # SSE 订阅者
 
-    def start(self, silent=False) / stop(self)       # 保留 join 旧线程 + 新 Event 的竞态修复（commit be583e0）
+    def start(self) -> str | None / stop(self)       # start 失败返回给用户看的错误文案（壳层决定弹窗还是忽略）
+                                                     # 保留 join 旧线程 + 新 Event 的竞态修复（commit be583e0）
     def subscribe(self) -> queue.Queue / unsubscribe(q)
     def snapshot(self) -> dict                        # {items, status, running, users, kinds}
     def clear(self)
@@ -83,8 +84,8 @@ class MonitorCore:
 
 | type | payload | 触发点 |
 |---|---|---|
-| `history` | `[item...]` | 某来源首轮基线（不弹通知） |
-| `new` | `[item...]` | 有新动态（已按 key 去重，已弹通知） |
+| `history` | `[entry...]`（已处理好的展示字段，同 `messages.db`） | 某来源首轮基线（不弹通知） |
+| `new` | `[entry...]` | 有新动态（已按 key 去重、已入列写库；通知在广播之后弹） |
 | `status` | `{text, running, last_check}` | 每轮结束 / 抓取失败 / 启停 |
 | `config` | `{users:[...]}` | 保存用户设置后 |
 | `cleared` | `{}` | 清空列表 |
