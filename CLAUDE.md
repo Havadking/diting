@@ -172,4 +172,4 @@ commit message 用 conventional commits 格式，说明"为什么"而非"改了�
 - 推特：外部 CLI `twitter user-posts @handle -n 40 --json`（`pipx install twitter-cli`），靠环境变量 `TWITTER_AUTH_TOKEN` / `TWITTER_CT0` 认证。子进程必须带 `_no_window_kwargs()` 隐藏控制台黑框。
 - 微博：`weibo.com/ajax/statuses/mymblog`，Cookie 从 `config.json` 的 `weibo_cookie` 读（至少含 `SUB`）。
 
-全是非官方接口，随时可能变。抓取失败走 `q.put(("status", ...))` 显示到状态栏，**不要让单个来源的异常中断整个轮询循环**。
+全是非官方接口，随时可能变。**不要让单个来源的异常中断整个轮询循环**。抓取失败除了闪状态栏，还要经 `core._mark_fail()` 记进 `core.health`（`uid -> {last_ok, last_error, fail_streak, append_error}`，随 `status` 事件下发，侧栏用户名旁显示红点；查追加失败单独记 `append_error`、不计入 `fail_streak`），并用 `monitor.log()` 写 `monitor.log`（gitignore 的 `*.log` 已覆盖）。状态栏那句"上次检查"每轮都会被覆盖，所以它**不能**是失败的唯一出口——新增数据源时按 `_run_loop` 里股吧那段的样子成对调用 `_mark_fail` / `_mark_ok`。
