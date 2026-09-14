@@ -28,6 +28,8 @@
     --ink-3: #8a91a0;
     --accent: #1772b4;      /* 群青 */
     --accent-soft: #e6f0f9;
+    --stock-red: #d9383a;   /* A 股看盘大涨红 / 吉祥朱红 */
+    --stock-red-soft: rgba(217, 56, 58, 0.09);
     --ok: #1ba784;          /* 竹绿 */
     --warn: #d6a01d;
     --danger: #ed5126;      /* 朱红 */
@@ -52,6 +54,7 @@
       --line: #2a2f3a; --line-strong: #3a4150;
       --ink: #e7eaf0; --ink-2: #b2b9c7; --ink-3: #737b8c;
       --accent: #5aa3e0; --accent-soft: #1d2f42;
+      --stock-red: #f26161; --stock-red-soft: rgba(242, 97, 97, 0.14);
       --ok: #3fc39e; --sel: #243b55; --new-glow: #3a3320;
       --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.25);
       --shadow-lg: 0 8px 30px rgba(0,0,0,.5);
@@ -67,6 +70,7 @@
     --line: #2a2f3a; --line-strong: #3a4150;
     --ink: #e7eaf0; --ink-2: #b2b9c7; --ink-3: #737b8c;
     --accent: #5aa3e0; --accent-soft: #1d2f42;
+    --stock-red: #f26161; --stock-red-soft: rgba(242, 97, 97, 0.14);
     --ok: #3fc39e; --sel: #243b55; --new-glow: #3a3320;
     --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.25);
     --shadow-lg: 0 8px 30px rgba(0,0,0,.5);
@@ -355,53 +359,57 @@
     color: inherit; border-radius: 2px; padding: 0 1px; font-weight: 500;
   }
 
-  /* ---------- 股票代码/名称增强标签 ---------- */
+  /* ---------- 股票代码/名称行情联动标签 ---------- */
   .stock-link {
     display: inline;
-    color: var(--accent);
-    font-weight: 500;
+    color: var(--stock-red);
+    font-weight: 600;
     text-decoration: none;
-    border-bottom: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent);
+    border: none;
+    background: none;
+    padding: 0 1px;
+    margin: 0;
     border-radius: 3px;
-    padding: 0 2px;
-    margin: 0 1px;
-    transition: background-color .12s, color .12s, border-color .12s;
+    transition: color .12s, background-color .12s, text-decoration .12s;
     cursor: pointer;
   }
   .stock-link:hover {
-    background: var(--accent-soft);
-    color: var(--accent);
-    border-bottom-style: solid;
-    border-color: var(--accent);
+    color: var(--stock-red);
+    background: var(--stock-red-soft);
+    text-decoration: underline;
+    text-underline-offset: 2px;
   }
   .stock-link.stock-tag {
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-    border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
-    border-radius: 4px;
-    padding: 1px 5px;
     font-family: var(--mono);
-    font-size: .92em;
     font-weight: 600;
+    border: none;
+    background: none;
+    padding: 0 1px;
   }
   .stock-link.stock-tag:hover {
-    background: var(--accent-soft);
-    border-color: var(--accent);
+    background: var(--stock-red-soft);
+    text-decoration: underline;
+    text-underline-offset: 2px;
   }
   .stock-bar-link {
     text-decoration: none;
     cursor: pointer;
     border-radius: 4px;
-    transition: color .12s, background-color .12s;
+    transition: color .12s;
   }
   .stock-bar-link:hover {
-    color: var(--accent) !important;
+    color: var(--stock-red) !important;
     text-decoration: underline;
+    text-underline-offset: 2px;
   }
   .dense .card:not(.open) .stock-link {
-    border-bottom: none;
+    border: none;
+    background: none;
+    padding: 0;
+  }
+  .dense .card:not(.open) .stock-link:hover {
     text-decoration: underline;
-    text-decoration-style: dashed;
-    text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
+    text-underline-offset: 2px;
   }
 
   /* ---------- 上次看到这里（未读断点分界线） ---------- */

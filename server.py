@@ -95,6 +95,8 @@ class Handler(BaseHTTPRequestHandler):
         path = u.path
         if path == "/":
             return self._serve_static("index.html")
+        if path == "/favicon.ico":
+            return self._serve_static("favicon.ico")
         if path.startswith("/assets/"):
             return self._serve_static(path[len("/assets/"):])
         if path == "/api/snapshot":
