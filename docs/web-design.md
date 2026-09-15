@@ -112,6 +112,8 @@ class MonitorCore:
 
 默认只绑 `127.0.0.1`；`--host 0.0.0.0`（`run_gui_lan.bat`）开放局域网，让平板/手机当小副屏，启动时会打印私网段的访问地址（`lan_ips()`，故意不用 UDP connect 猜出口地址——开着 TUN 代理时那会猜到 198.18.x.x）。所有 `POST` 校验 `Origin` 头必须等于自己（`http://<Host 头>`，所以局域网地址访问也能过），否则 403——防止其它网页用 `fetch` 打本地端口。
 
+平板当副屏时浏览器地址栏很占地方，两条路：① `index.html` 带 `manifest.webmanifest`（`display: standalone`）和 `apple-mobile-web-app-capable` meta，「添加到主屏幕」后独立窗口打开——iPad Safari 明文 http 也生效，Android Chrome 要求安全上下文（局域网 http 需在 flags 里豁免）；② 页面内「全屏」按钮走 Fullscreen API（iPad Safari 只有 webkit 前缀版），standalone 模式下没有这个 API、按钮自动隐藏。图标 `icon-192/512.png` 是 `favicon.svg` 用浏览器 canvas 栅格化出来的，`apple-touch-icon.png` 额外铺了不透明底色（iOS 会把透明角渲染成黑）。
+
 | 方法 | 路径 | 请求 | 响应 |
 |---|---|---|---|
 | GET | `/` | — | `web/index.html` |
