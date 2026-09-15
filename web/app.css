@@ -292,15 +292,17 @@
   .link { color: var(--accent); padding: 0 4px; }
   .link:hover { text-decoration: underline; }
   .fab svg { width: 15px; height: 15px; }
+  /* 「回到最下方」浮标：.main 是滚动容器，absolute 会跟着内容滚走，要 fixed 才钉在视口右下角。
+     不要底色、不要突出——只有一圈细边和灰图标，悬停才提亮。 */
   .fab {
-    position: absolute; right: 28px; bottom: 22px; z-index: 3;
-    display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 999px;
-    background: var(--ink); color: var(--bg); box-shadow: var(--shadow-lg); font-size: 13px;
+    position: fixed; right: 26px; bottom: 22px; z-index: 3;
+    display: inline-flex; align-items: center; gap: 7px; padding: 0 14px; height: 34px; border-radius: 999px;
+    background: transparent; color: var(--ink-3); border: 1px solid var(--line-strong); font-size: 12.5px;
+    transition: color .12s, border-color .12s, background .12s;
   }
-
-  .fab.icon { width: 40px; height: 40px; padding: 0; justify-content: center; opacity: .82; }
-  .fab.icon:hover { opacity: 1; }
-  .fab.icon svg { width: 17px; height: 17px; }
+  .fab:hover { color: var(--ink); border-color: var(--ink-3); background: color-mix(in srgb, var(--card) 70%, transparent); }
+  .fab.icon { width: 34px; padding: 0; justify-content: center; }
+  .fab.icon svg { width: 16px; height: 16px; }
 
   /* ---------- 紧凑单行模式 (Dense Mode) ---------- */
   .dense .cards { gap: 3px; }
