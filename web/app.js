@@ -44,6 +44,8 @@
     power: svg('<path d="M18.4 6.6a9 9 0 1 1-12.8 0M12 2v10"/>'),
     down: svg('<path d="M12 5v14M5 12l7 7 7-7"/>'),
     more: svg('<circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/>', "currentColor"),
+    expand: svg('<path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/>'),
+    shrink: svg('<path d="M3 8h5V3M21 8h-5V3M3 16h5v5M21 16h-5v5"/>'),
     rows: svg('<path d="M4 6h16M4 12h16M4 18h16"/>'),
     cards: svg('<rect x="4" y="4" width="16" height="6" rx="1.5"/><rect x="4" y="14" width="16" height="6" rx="1.5"/>'),
     search: svg('<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/>'),
@@ -642,6 +644,29 @@
     useEffect(() => store.set("diting.dense", dense), [dense]);
     const toggleDense = () => setDense(d => !d);
 
+    // 全屏：平板/手机浏览器地址栏收不掉，用 Fullscreen API 兜底。iPad Safari 只认 webkit 前缀，
+    // 已经是「添加到主屏幕」独立窗口（standalone）时没有地址栏、也没这个 API，按钮不显示。
+    const fsDoc = document;
+    const fsSupported = !!(fsDoc.fullscreenEnabled || fsDoc.webkitFullscreenEnabled);
+    const isFs = () => !!(fsDoc.fullscreenElement || fsDoc.webkitFullscreenElement);
+    const [fs, setFs] = useState(isFs);
+    useEffect(() => {
+      const on = () => setFs(isFs());
+      fsDoc.addEventListener("fullscreenchange", on);
+      fsDoc.addEventListener("webkitfullscreenchange", on);
+      return () => { fsDoc.removeEventListener("fullscreenchange", on); fsDoc.removeEventListener("webkitfullscreenchange", on); };
+    }, []);
+    const toggleFs = () => {
+      const fail = () => toast("浏览器不允许网页全屏，试试「添加到主屏幕」", "error");
+      try {
+        // 标准 API 返回 Promise、被拒绝时 reject；webkit 前缀版同步执行，没返回值
+        const p = isFs()
+          ? (fsDoc.exitFullscreen || fsDoc.webkitExitFullscreen).call(fsDoc)
+          : (el => (el.requestFullscreen || el.webkitRequestFullscreen).call(el))(fsDoc.documentElement);
+        if (p && p.catch) p.catch(fail);
+      } catch (e) { fail(); }
+    };
+
     const [sound, setSound] = useState(() => store.get("diting.sound", true));
     useEffect(() => store.set("diting.sound", sound), [sound]);
     const toggleSound = () => setSound(s => !s);
@@ -959,6 +984,7 @@
             <button class="btn quiet only-wide" title="测试通知" onClick=${act.test}>${I.bell}</button>
             <button class="btn quiet only-wide" title="清空列表" onClick=${act.clear}>${I.trash}</button>
             <button class="btn quiet only-wide" title=${isDarkNow(theme) ? "切到浅色" : "切到深色"} onClick=${toggleTheme}>${isDarkNow(theme) ? I.sun : I.moon}</button>
+            ${fsSupported && html`<button class="btn quiet only-wide" title=${fs ? "退出全屏" : "全屏（平板盯盘去掉地址栏）"} onClick=${toggleFs}>${fs ? I.shrink : I.expand}</button>`}
             <button class="btn quiet only-wide" title="退出程序" onClick=${act.quit}>${I.power}</button>
             <div class="menu-wrap only-narrow">
               <button class="btn quiet" title="更多" onClick=${e => { e.stopPropagation(); setMenu(m => !m); }}>${I.more}</button>
@@ -969,6 +995,7 @@
                   <button onClick=${() => { setMenu(false); act.test(); }}>${I.bell}测试通知</button>
                   <button onClick=${() => { setMenu(false); act.clear(); }}>${I.trash}清空列表</button>
                   <button onClick=${() => { setMenu(false); toggleTheme(); }}>${isDarkNow(theme) ? I.sun : I.moon}${isDarkNow(theme) ? "浅色模式" : "深色模式"}</button>
+                  ${fsSupported && html`<button onClick=${() => { setMenu(false); toggleFs(); }}>${fs ? I.shrink : I.expand}${fs ? "退出全屏" : "全屏"}</button>`}
                   <hr/>
                   <button class="danger" onClick=${() => { setMenu(false); act.quit(); }}>${I.power}退出程序</button>
                 </div>`}

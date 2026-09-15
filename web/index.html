@@ -2,11 +2,22 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>谛听</title>
 <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
 <link rel="alternate icon" type="image/png" href="/assets/favicon.png">
 <link rel="icon" href="/favicon.ico">
+<!-- 平板/手机「添加到主屏幕」后以独立窗口打开、不带浏览器地址栏。
+     iPad Safari 靠下面两个 apple-* meta（明文 http 也生效）；Android Chrome 靠 manifest，
+     但非 https 的局域网地址默认不算安全上下文，需在 chrome://flags 里把本地址加进
+     unsafely-treat-insecure-origin-as-secure，否则只会生成普通书签。页面内另有「全屏」按钮兜底。 -->
+<link rel="manifest" href="/assets/manifest.webmanifest">
+<meta name="theme-color" content="#141824">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="谛听">
+<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
 <link rel="stylesheet" href="/assets/app.css">
 </head>
 <body>
