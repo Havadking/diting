@@ -299,10 +299,17 @@ def lan_ips():
         addrs = {a[4][0] for a in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)}
     except OSError:
         return []
-    def is_lan(ip):
+    def rank(ip):
+        """家用路由器几乎都是 192.168.x.x，排最前；172.16/12 常是 WSL/Hyper-V 虚拟网卡，排最后。不是私网段返回 None。"""
         parts = [int(x) for x in ip.split(".")]
-        return parts[0] == 10 or parts[:2] == [192, 168] or (parts[0] == 172 and 16 <= parts[1] <= 31)
-    return sorted(ip for ip in addrs if is_lan(ip))
+        if parts[:2] == [192, 168]:
+            return 0
+        if parts[0] == 10:
+            return 1
+        if parts[0] == 172 and 16 <= parts[1] <= 31:
+            return 2
+        return None
+    return sorted((ip for ip in addrs if rank(ip) is not None), key=lambda ip: (rank(ip), ip))
 
 
 def main():
