@@ -293,10 +293,14 @@
   .link:hover { text-decoration: underline; }
   .fab svg { width: 15px; height: 15px; }
   .fab {
-    position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 3;
+    position: absolute; right: 28px; bottom: 22px; z-index: 3;
     display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 999px;
     background: var(--ink); color: var(--bg); box-shadow: var(--shadow-lg); font-size: 13px;
   }
+
+  .fab.icon { width: 40px; height: 40px; padding: 0; justify-content: center; opacity: .82; }
+  .fab.icon:hover { opacity: 1; }
+  .fab.icon svg { width: 17px; height: 17px; }
 
   /* ---------- 紧凑单行模式 (Dense Mode) ---------- */
   .dense .cards { gap: 3px; }
@@ -568,6 +572,8 @@
   .sum-bar .who .chip { --c: var(--ink-2); --kbg: var(--card); width: auto; padding: 0 10px; }
   .sum-bar .who .chip span { display: inline; }
   .sum-bar .who .chip i { width: 7px; height: 7px; }
+  .sum-bar .who .chip.done { border-color: var(--uc, var(--accent)); border-style: solid; }
+  .sum-bar .who .chip.done svg { width: 12px; height: 12px; color: var(--uc, var(--accent)); margin-left: -2px; }
   .sum-bar .who .chip.on { --c: var(--uc, var(--accent)); --kbg: color-mix(in srgb, var(--uc, var(--accent)) 14%, var(--card)); }
   .sum-bar .date { display: inline-flex; align-items: center; gap: 4px; }
   .sum-bar .date input { height: 30px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--ink); font-family: var(--mono); font-size: 12.5px; }

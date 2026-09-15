@@ -272,6 +272,16 @@ class MonitorCore:
         finally:
             db.close()
 
+    def list_summaries(self, date):
+        try:
+            db = monitor.get_db()
+        except Exception:
+            return []
+        try:
+            return monitor.list_summary_names(db, date)
+        finally:
+            db.close()
+
     def put_summary(self, rec):
         db = monitor.get_db()
         try:

@@ -122,6 +122,9 @@ class MockCore(core.MonitorCore):
     def get_summary(self, name, date):
         return getattr(self, "_summaries", {}).get((name, date))
 
+    def list_summaries(self, date):
+        return [n for (n, d) in getattr(self, "_summaries", {}) if d == date]
+
     def put_summary(self, rec):
         self.__dict__.setdefault("_summaries", {})[(rec["name"], rec["date"])] = rec
 

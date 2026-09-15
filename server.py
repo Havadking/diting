@@ -280,7 +280,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_error_json(HTTPStatus.BAD_REQUEST, "name/date required")
         rec = self.core.get_summary(name, date)
         current = len(summary_mod.preprocess(self.core.load_day(name, date)))
-        self._send_json({"ok": True, "summary": rec, "current_count": current})
+        self._send_json({"ok": True, "summary": rec, "current_count": current,
+                         "done": self.core.list_summaries(date)})
 
     def _api_ai_summary_post(self, body):
         """生成（或强制重新生成）日报。同步调模型，通常 20~60 秒，handler 线程独立，不影响别的请求。"""

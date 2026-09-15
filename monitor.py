@@ -187,6 +187,11 @@ def load_summary(conn, name, date):
     return rec if rec and (rec.get("text") or "").strip() else None
 
 
+def list_summary_names(conn, date):
+    """某天已经生成过（且非空）日报的博主名，给日报页的 pill 打勾用。"""
+    return [r[0] for r in conn.execute("SELECT name FROM summaries WHERE date = ? AND text IS NOT NULL AND text != ''", (date,))]
+
+
 def save_summary(conn, rec):
     conn.execute("INSERT OR REPLACE INTO summaries (" + ", ".join(SUMMARY_COLS) + ") VALUES (?, ?, ?, ?, ?, ?)",
                  tuple(rec.get(c) for c in SUMMARY_COLS))

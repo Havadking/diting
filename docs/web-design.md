@@ -126,7 +126,7 @@ class MonitorCore:
 | GET | `/api/ai/settings` | — | `{active, profiles:[{id,name,base_url,model,key_hint,has_key}], prompt, default_prompt}`；`api_key` 明文永远不出后端，只给脱敏的 `key_hint` |
 | POST | `/api/ai/settings` | `{active, prompt, profiles:[{id?,name,base_url,model,api_key?}]}` | 同 GET；profile 不带 `api_key` 表示"没改"，沿用旧配置里同 id 的 key |
 | POST | `/api/ai/test` | `{profile}` | `{"ok":true,"reply"}`；发一条极短的请求验证接口能通，可以测还没保存的配置 |
-| GET | `/api/ai/summary?name=&date=` | — | `{summary: 缓存的日报或 null, current_count: 当天现在的有效条数}` |
+| GET | `/api/ai/summary?name=&date=` | — | `{summary: 缓存的日报或 null, current_count: 当天现在的有效条数, done: [这天已生成过日报的博主名]}` |
 | POST | `/api/ai/summary` | `{name, date, force?}` | `{summary:{name,date,model,created_at,item_count,text}, cached}`；同步调模型，通常 20~60 秒；有缓存且不 `force` 就直接返回缓存 |
 
 `item` 字段与 `messages.db` 一致：`key, name, kind, icon, time, bar, content, link`。打开原帖直接前端 `<a target="_blank">`，不经过后端。

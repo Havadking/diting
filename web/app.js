@@ -44,6 +44,7 @@
     power: svg('<path d="M18.4 6.6a9 9 0 1 1-12.8 0M12 2v10"/>'),
     down: svg('<path d="M12 5v14M5 12l7 7 7-7"/>'),
     doc: svg('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>'),
+    check: svg('<path d="M20 6L9 17l-5-5"/>'),
     spark: svg('<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM5 3v4M3 5h4M19 17v4M17 19h4"/>'),
     left: svg('<path d="M15 18l-6-6 6-6"/>'),
     right: svg('<path d="M9 18l6-6-6-6"/>'),
@@ -693,6 +694,7 @@
     const [date, setDate] = useState(today);
     const [rec, setRec] = useState(null);         // 缓存的/刚生成的日报
     const [count, setCount] = useState(null);     // 当天当前有效条数
+    const [done, setDone] = useState(() => new Set());   // 当天已经生成过日报的博主
     const [busy, setBusy] = useState(false);
     const [err, setErr] = useState("");
     const seq = useRef(0);
@@ -707,7 +709,7 @@
       fetch("/api/ai/summary?name=" + encodeURIComponent(who) + "&date=" + date).then(r => r.json()).then(d => {
         if (my !== seq.current) return;
         if (!d.ok) throw new Error(d.error || "读取失败");
-        setRec(d.summary || null); setCount(d.current_count);
+        setRec(d.summary || null); setCount(d.current_count); setDone(new Set(d.done || []));
       }).catch(e => my === seq.current && setErr(e.message));
     }, [who, date, aiVersion]);
 
@@ -720,6 +722,7 @@
         if (my !== seq.current) return;
         setRec(d.summary);
         setCount(d.summary.item_count);
+        setDone(prev => new Set([...prev, who]));
         if (!d.cached) toast("日报已生成");
       } catch (e) {
         if (my === seq.current) setErr(e.message);
@@ -732,8 +735,8 @@
         <div class="sum-bar">
           <div class="who">
             ${users.map(u => html`
-              <button key=${u.uid} class=${"chip" + (who === u.name ? " on" : "")} style=${u.color ? { "--uc": u.color } : undefined}
-                      onClick=${() => setWho(u.name)}><i/><span>${u.name}</span></button>`)}
+              <button key=${u.uid} class=${"chip" + (who === u.name ? " on" : "") + (done.has(u.name) ? " done" : "")} style=${u.color ? { "--uc": u.color } : undefined}
+                      title=${done.has(u.name) ? u.name + "：这天已生成过日报" : u.name} onClick=${() => setWho(u.name)}><i/><span>${u.name}</span>${done.has(u.name) && I.check}</button>`)}
           </div>
           <span class="spacer"/>
           <div class="date">
@@ -940,6 +943,7 @@
     const [toggled, setToggled] = useState(() => new Map(Object.entries(store.get("diting.collapsed", {}) || {})));
     const [newKeys, setNewKeys] = useState(() => new Set());
     const [pendingBelow, setPendingBelow] = useState(0);   // 用户不在底部时到达的新条数（FAB 上的 N）
+    const [atBottom, setAtBottom] = useState(true);        // 不在底部时显示「回到最新」浮动按钮
     const [unread, setUnread] = useState(0);               // 页面不可见时到达的新条数（标签页标题）
     const mainRef = useRef(null);
     const followRef = useRef(false);   // 新条目到达时用户在底部 → 渲染完跟着滚到底
@@ -962,13 +966,19 @@
       const el = mainRef.current; if (!el) return;
       el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
       setPendingBelow(0);
+      setAtBottom(true);
     }, []);
+
+    // 从日报页切回列表：feed 隐藏期间滚动容器高度归零、位置丢失，回来一律回到最下面（最新）
+    useLayoutEffect(() => { if (view === "feed" && s.loaded) scrollToBottom(false); }, [view]);
 
     // 滚到底了就把 FAB 计数清掉
     useEffect(() => {
       const el = mainRef.current; if (!el) return;
       const h = () => {
-        if (isAtBottom()) setPendingBelow(0);
+        const b = isAtBottom();
+        setAtBottom(b);
+        if (b) setPendingBelow(0);
         if (el.scrollTop < 80) loadOlderRef.current();
       };
       el.addEventListener("scroll", h, { passive: true });
@@ -1254,7 +1264,10 @@
             ${s.loaded && !s.items.length && html`<p class="empty">还没有任何动态。</p>`}
             ${s.loaded && s.items.length > 0 && !filteredShown.length && html`<p class="empty">当前筛选/搜索下没有动态。<button class="link" onClick=${() => { clearSearch(); setFilter({ user: null, kindOff: new Set() }); }}>清除筛选与搜索</button></p>`}
           </div>
-          ${view === "feed" && pendingBelow > 0 && html`<button class="fab" onClick=${() => scrollToBottom(true)}>${I.down}<span>${pendingBelow} 条新动态</span></button>`}
+          ${view === "feed" && (pendingBelow > 0 || !atBottom) && html`
+            <button class=${"fab" + (pendingBelow > 0 ? "" : " icon")} title="回到最下方（最新）" onClick=${() => scrollToBottom(true)}>
+              ${I.down}${pendingBelow > 0 && html`<span>${pendingBelow} 条新动态</span>`}
+            </button>`}
         </main>
 
         ${drawer && html`<${Drawer} users=${s.users} config=${s.config} sound=${sound} onToggleSound=${setSound} onClose=${() => setDrawer(false)} onSaved=${() => fetchSnapshot(dispatch).catch(() => {})} toast=${toast}/>`}
