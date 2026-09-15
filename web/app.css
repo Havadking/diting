@@ -291,18 +291,22 @@
   .empty { color: var(--ink-3); padding: 40px 0; text-align: center; }
   .link { color: var(--accent); padding: 0 4px; }
   .link:hover { text-decoration: underline; }
-  .fab svg { width: 15px; height: 15px; }
   /* 「回到最下方」浮标：.main 是滚动容器，absolute 会跟着内容滚走，要 fixed 才钉在视口右下角。
      不要底色、不要突出——只有一圈细边和灰图标，悬停才提亮。 */
   .fab {
-    position: fixed; right: 26px; bottom: 22px; z-index: 3;
-    display: inline-flex; align-items: center; gap: 7px; padding: 0 14px; height: 34px; border-radius: 999px;
-    background: transparent; color: var(--ink-3); border: 1px solid var(--line-strong); font-size: 12.5px;
+    position: fixed; right: var(--fab-right, 26px); bottom: 22px; z-index: 3;
+    width: var(--fab-size, 30px); height: var(--fab-size, 30px); border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; color: var(--ink-3); border: 1px solid var(--line-strong);
     transition: color .12s, border-color .12s, background .12s;
   }
   .fab:hover { color: var(--ink); border-color: var(--ink-3); background: color-mix(in srgb, var(--card) 70%, transparent); }
-  .fab.icon { width: 34px; padding: 0; justify-content: center; }
-  .fab.icon svg { width: 16px; height: 16px; }
+  .fab svg { width: 15px; height: 15px; }
+  /* 下面有没看的新动态：右上角挂一个小数字，整体宽度不变，仍能待在空档里 */
+  .fab .n {
+    position: absolute; top: -7px; right: -6px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px;
+    background: var(--accent); color: #fff; font-size: 10px; font-weight: 600; line-height: 16px; text-align: center;
+    font-family: var(--mono); font-variant-numeric: tabular-nums;
+  }
 
   /* ---------- 紧凑单行模式 (Dense Mode) ---------- */
   .dense .cards { gap: 3px; }

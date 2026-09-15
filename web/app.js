@@ -972,6 +972,35 @@
     // 从日报页切回列表：feed 隐藏期间滚动容器高度归零、位置丢失，回来一律回到最下面（最新）
     useLayoutEffect(() => { if (view === "feed" && s.loaded) scrollToBottom(false); }, [view]);
 
+    // 回底浮标放在「卡片右边缘 ↔ 滚动条」这条空档的正中间，别压在列表上。空档随窗口宽度/侧栏收起/
+    // 卡片限宽变化，用 ResizeObserver 量出来写成 CSS 变量 --fab-right；空档太窄就贴着滚动条放。
+    const calcFabRef = useRef(null);
+    useEffect(() => {
+      const main = mainRef.current; if (!main) return;
+      const feed = main.querySelector(".feed"); if (!feed) return;
+      const SIZE = 30;
+      const calc = () => {
+        const m = main.getBoundingClientRect(), f = feed.getBoundingClientRect();
+        const inner = m.left + main.clientWidth;                       // 内容区右边缘（不含滚动条）
+        const cardsRight = f.right - parseFloat(getComputedStyle(feed).paddingRight || 0);
+        const gap = inner - cardsRight;
+        // 空档放不下 30px 的圆就缩到 22px 为止，宁可小一点也不压到卡片上
+        const size = gap >= SIZE + 6 ? SIZE : Math.max(22, Math.min(SIZE, Math.floor(gap - 4)));
+        const center = cardsRight + gap / 2;
+        main.style.setProperty("--fab-size", size + "px");
+        main.style.setProperty("--fab-right", Math.max(2, Math.round(window.innerWidth - center - size / 2)) + "px");
+        setAtBottom(isAtBottom());   // 折叠日期组/窗口变高让内容不再可滚时，浮标要跟着消失
+      };
+      calcFabRef.current = calc;
+      calc();
+      const ro = new ResizeObserver(calc);
+      ro.observe(main); ro.observe(feed);
+      window.addEventListener("resize", calc);
+      return () => { ro.disconnect(); window.removeEventListener("resize", calc); };
+    }, [s.loaded]);
+    // 浮标每次出现前再量一次，兜住 ResizeObserver 没触发的情况（侧栏收起/紧凑模式切换/视图切回）
+    useEffect(() => { if (calcFabRef.current) calcFabRef.current(); }, [atBottom, pendingBelow, view, rail, dense]);
+
     // 滚到底了就把 FAB 计数清掉
     useEffect(() => {
       const el = mainRef.current; if (!el) return;
@@ -1265,8 +1294,8 @@
             ${s.loaded && s.items.length > 0 && !filteredShown.length && html`<p class="empty">当前筛选/搜索下没有动态。<button class="link" onClick=${() => { clearSearch(); setFilter({ user: null, kindOff: new Set() }); }}>清除筛选与搜索</button></p>`}
           </div>
           ${view === "feed" && (pendingBelow > 0 || !atBottom) && html`
-            <button class=${"fab" + (pendingBelow > 0 ? "" : " icon")} title="回到最下方（最新）" onClick=${() => scrollToBottom(true)}>
-              ${I.down}${pendingBelow > 0 && html`<span>${pendingBelow} 条新动态</span>`}
+            <button class="fab" title=${pendingBelow > 0 ? pendingBelow + " 条新动态在下面，点击回到最新" : "回到最下方（最新）"} onClick=${() => scrollToBottom(true)}>
+              ${I.down}${pendingBelow > 0 && html`<b class="n">${pendingBelow > 99 ? "99+" : pendingBelow}</b>`}
             </button>`}
         </main>
 
