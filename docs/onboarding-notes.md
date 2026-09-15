@@ -92,7 +92,7 @@ server.py + web/     app.py             test_once.py
 |---|---|---|
 | 股吧发帖/转发 | `i.eastmoney.com/api/guba/userdynamiclistv2?...&type=1` | **必须用 `type=1`**，另一个 `fullarticlelist` 只返回财富号文章，会漏掉股吧短帖 |
 | 股吧评论 | `i.eastmoney.com/api/guba/myreply` | 评论可能是「回复别人的评论」，作者名要按 `source_reply_user_nickname` → `source_post_user_nickname` 兜底 |
-| 股吧帖子追加 | `guba.eastmoney.com/news,{code},{post_id}.html` 详情页 | 抠内嵌 `var post_article={...}` 里的 `post_add_list`；**最容易触发反爬**，见 §7 |
+| 股吧帖子全文/追加 | `gbapi.eastmoney.com/content/api/Post/ArticleContent?postid=` | 列表接口正文超 200 字会截断，全文 `post_content`(HTML) 和追加 `post_add_list` 都从这取；按帖单独请求，比列表接口敏感，见 §7 |
 | 推特 | 外部 CLI `twitter user-posts @handle -n 40 --json` | 需 `pipx install twitter-cli` + 环境变量 `TWITTER_AUTH_TOKEN` / `TWITTER_CT0`；子进程必须带 `_no_window_kwargs()` 隐藏 Windows 黑框 |
 | 微博 | `weibo.com/ajax/statuses/mymblog` | Cookie 从 `config.json` 的 `weibo_cookie` 读（至少含 `SUB`），失效时报 `ok != 1` |
 
@@ -211,20 +211,20 @@ my_stop = self.stop_event                # 新线程只认这个局部引用
 
 ### 7.1 为什么需要单独做
 
-东方财富允许作者在原帖发布后继续「追加」内容（前端显示成"作者更新以下内容"），但**这部分文字不在列表接口的 `post_content` 里**，只存在于帖子详情页内嵌的 `var post_article={...}` JSON 的 `post_add_list` 数组。所以要**为每条关心的帖子多发一次详情页请求**。
+东方财富允许作者在原帖发布后继续「追加」内容（前端显示成"作者更新以下内容"），但**这部分文字不在列表接口的 `post_content` 里**，只有 `ArticleContent` 接口返回的 `post_add_list` 数组才有。所以要**为每条关心的帖子多发一次请求**。同一个接口也是「全文补全」的数据源：列表接口把超过 200 字的正文截成摘要，`monitor.complete_truncated()` 在新帖入列前用它换成全文（`core._complete_truncated()` 调，首轮基线只补最近 10 条）。以前走帖子详情页抠内嵌 JSON，第一次请求就可能被拦成验证页，已换掉。
 
 ### 7.2 实现链路
 
 1. `monitor.parse_news_link(link)` 从统一 item 的 `link` 反解出 `(code, post_id)`——**刻意不给 item 字典加新字段**。
-2. `monitor._extract_js_object(html, "post_article")` **手动配平大括号**把 JSON 抠出来。正则的非贪婪匹配处理不了嵌套 JSON（第一个内层 `}` 就会被误判为结尾）——所以有这个手写状态机（还要处理字符串内的 `{}` 和转义）。
-3. `monitor.parse_post_appends(code, post_id)` 请求详情页、剥离 HTML 标签、产出 `kind="追加"` 的 item（key 前缀 `A`）。
+2. `monitor.fetch_article(post_id)` 请求 `ArticleContent`，被拦成验证页 / `rc != 1` / 没有 `post` 都抛异常。
+3. `monitor.parse_post_appends(code, post_id)` 取 `post_add_list`、用 `html_to_text()` 转成带段落换行的纯文本，产出 `kind="追加"` 的 item（key 前缀 `A`，`code` 只用来拼链接）。
 4. `core._register_append_watch()` 把**发布在 24 小时内**的 `发帖`/`转发` 登记进 `self._append_watch = {post_id: {uid, code, name, expires_at}}`。**只对 `check_appends: true` 的股吧用户生效**（推特/微博没有这个概念）。
-5. `core._check_append_watch()` 按 `append_check_interval_seconds`（默认 300 秒）挨个请求详情页；查到追加就 `_emit(state, "ap:" + post_id, ...)` 走**和其它来源完全一样**的去重/首轮基线/通知流程，并把 `expires_at` 顺延 24 小时；查不到就让它自然过期、下一轮被清掉。
+5. `core._check_append_watch()` 按 `append_check_interval_seconds`（默认 300 秒）挨个请求 `ArticleContent`；查到追加就 `_emit(state, "ap:" + post_id, ...)` 走**和其它来源完全一样**的去重/首轮基线/通知流程，并把 `expires_at` 顺延 24 小时；查不到就让它自然过期、下一轮被清掉。
 
 ### 7.3 两个刻意的设计决定
 
 - **`_append_watch` 故意不落盘**：只有后台线程碰它，不需加锁；重启清空**不是 bug**——下次轮询重新拉到该用户的帖子时，只要还在"发布 24 小时内"就会被重新登记。真正查到的追加内容会像其它动态一样存进 `messages.db`，不会因重启丢失。
-- **失败退避**（`_append_fail_streak` + `_append_backoff_interval`）：详情页比列表接口**更容易触发东财反爬验证**（实测踩过：连续调几次详情页后，同 IP 请求任何帖子详情页都会被拦成验证页）。`parse_post_appends()` 识别出验证页特征（`fd_guba_validate` / `em_capt.js`）就**主动抛异常**（避免把验证页误当成"没有追加"），`core` 据此把下次检查间隔按 `base * 2^streak` 翻倍拉长（封顶 2 小时），一旦有一轮成功就清零回正常间隔。**退避只作用于"查追加"这一个节奏，不影响正常轮询。**
+- **失败退避**（`_append_fail_streak` + `_append_backoff_interval`）：按帖单独请求的接口比列表接口**更容易触发东财反爬验证**（详情页时代实测踩过：连续调几次后，同 IP 请求任何帖子详情页都会被拦成验证页；`ArticleContent` 温和得多，但退避保留）。`fetch_article()` 识别出验证页特征（`fd_guba_validate` / `em_capt.js`）就**主动抛异常**（避免把验证页误当成"没有追加"），`core` 据此把下次检查间隔按 `base * 2^streak` 翻倍拉长（封顶 2 小时），一旦有一轮成功就清零回正常间隔。**退避只作用于"查追加"这一个节奏，不影响正常轮询。**
 
 ---
 

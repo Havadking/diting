@@ -5,9 +5,11 @@
 数据源:
   股吧发帖/转发: https://i.eastmoney.com/api/guba/userdynamiclistv2 (type=1)
   股吧评论/回复: https://i.eastmoney.com/api/guba/myreply
+  股吧帖子全文/追加: https://gbapi.eastmoney.com/content/api/Post/ArticleContent
   推特发帖:      twitter-cli (twitter user-posts @handle --json)，需 X 账号 cookie
 推送渠道: Server酱(serverchan) 或 PushPlus(pushplus)；桌面版用 Windows 通知
 """
+import html as html_mod
 import json
 import os
 import re
@@ -38,6 +40,11 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 # 发帖/文章/转发：用「全部动态」接口(type=1)，能拿到股吧短帖（fullarticlelist 只有财富号文章，会漏帖）
 POST_API = "https://i.eastmoney.com/api/guba/userdynamiclistv2?uid=%s&pagenum=1&pagesize=20&type=1"
 REPLY_API = "https://i.eastmoney.com/api/guba/myreply?uid=%s&pageindex=1"
+# 帖子全文 + 作者追加(post_add_list)。列表接口的 post_content 超过 200 字就截成摘要补"..."，全文和追加
+# 都只有这里给。以前用帖子详情页 news,{code},{post_id}.html 抠内嵌 JSON，那个页面第一次请求就可能被拦成
+# 反爬验证页；这个 JSON 接口实测温和得多。
+ARTICLE_API = ("https://gbapi.eastmoney.com/content/api/Post/ArticleContent"
+               "?postid=%s&plat=web&version=200&product=guba&deviceid=web")
 
 
 def log(msg):
@@ -426,86 +433,89 @@ NEWS_LINK_RE = re.compile(r"eastmoney\.com/news,([^,]+),(\d+)\.html")
 
 
 def parse_news_link(link):
-    """从帖子链接反解出 (股吧代码, post_id)，查追加要单独请求帖子详情页，得先知道这两个。"""
+    """从帖子链接反解出 (股吧代码, post_id)，查追加/取全文要按 post_id 单独请求，链接拼回去也要 code。"""
     m = NEWS_LINK_RE.search(link or "")
     if not m:
         return None, None
     return m.group(1), m.group(2)
 
 
-def _extract_js_object(html, var_name):
-    """从形如 `var xxx={...};` 的内联脚本里把配平的大括号抠出来。
-    正则的非贪婪匹配搞不定嵌套 JSON（第一个内层 `}` 就会被误当成结尾），只能手动数括号。"""
-    marker = "var %s=" % var_name
-    start = html.find(marker)
-    if start == -1:
-        marker = "var %s =" % var_name
-        start = html.find(marker)
-        if start == -1:
-            return None
-    brace_start = html.find("{", start)
-    if brace_start == -1:
-        return None
-    depth = 0
-    in_str = False
-    str_ch = ""
-    escape = False
-    i = brace_start
-    while i < len(html):
-        ch = html[i]
-        if in_str:
-            if escape:
-                escape = False
-            elif ch == "\\":
-                escape = True
-            elif ch == str_ch:
-                in_str = False
-        else:
-            if ch == '"' or ch == "'":
-                in_str = True
-                str_ch = ch
-            elif ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    return html[brace_start:i + 1]
-        i += 1
-    return None
+def fetch_article(post_id):
+    """取一条帖子的完整数据(post 字典)。被拦成验证页、rc != 1、没有 post 都抛异常——
+    调用方别把这些情况误当成"帖子没内容/没追加"。"""
+    req = urllib.request.Request(ARTICLE_API % post_id, headers={
+        "User-Agent": UA,
+        "Referer": "https://guba.eastmoney.com/",
+        "Accept": "application/json, text/plain, */*",
+    })
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        body = resp.read().decode("utf-8", "ignore")
+    if "fd_guba_validate" in body or "em_capt.js" in body:
+        raise RuntimeError("触发东财反爬验证，本次跳过")
+    try:
+        data = json.loads(body)
+    except Exception:
+        raise RuntimeError("接口返回的不是 JSON：%s" % body[:60])
+    post = data.get("post") if isinstance(data, dict) else None
+    if not isinstance(post, dict) or data.get("rc") != 1:
+        raise RuntimeError("接口返回异常：%s" % str(data.get("me") if isinstance(data, dict) else "")[:60])
+    return post
+
+
+def html_to_text(s):
+    """帖子全文/追加是富文本 HTML：段落和换行转成 \n，其余标签剥掉，实体反转义。"""
+    s = re.sub(r"(?i)<br\s*/?>", "\n", s or "")
+    s = re.sub(r"(?i)</(p|div|li|h[1-6])>", "\n", s)
+    s = re.sub(r"<[^>]+>", "", s)
+    s = html_mod.unescape(s).replace("\xa0", " ")
+    s = re.sub(r"[ \t]+\n", "\n", s)
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
+
+
+def is_truncated(content):
+    """列表接口把超过 200 字的正文截成前 200 字 + "..."。作者自己写的省略号一般不会正好卡在这个长度上。"""
+    c = (content or "").rstrip()
+    return len(c) >= 195 and c.endswith(("...", "…"))
+
+
+def fetch_full_content(post_id):
+    return html_to_text(fetch_article(post_id).get("post_content") or "")
+
+
+def complete_truncated(items, seen_keys, on_error=None):
+    """把列表接口截成摘要的帖子换成全文，就地改 item["content"]。
+    只处理没见过的帖子（避免每轮轮询都去请求全文），取不到就保留摘要，不影响这条动态本身的入列/通知。"""
+    for it in items:
+        if it["kind"] not in ("发帖", "转发") or it["key"] in seen_keys or not is_truncated(it["content"]):
+            continue
+        try:
+            full = fetch_full_content(it["key"][1:])
+        except Exception as e:
+            if on_error:
+                on_error(it, e)
+            continue
+        if full:
+            it["content"] = full
+        time.sleep(random.uniform(1, 2))
 
 
 def parse_post_appends(code, post_id):
-    """抓帖子详情页，取作者「追加」的内容(post_add_list)。这部分内容不在
-    userdynamiclistv2 的列表接口里，只有帖子详情页的内嵌 JSON(post_article)才有。"""
-    link = "https://guba.eastmoney.com/news,%s,%s.html" % (code, post_id)
-    req = urllib.request.Request(link, headers={
-        "User-Agent": UA,
-        "Referer": "https://guba.eastmoney.com/",
-    })
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        html = resp.read().decode("utf-8", "ignore")
-    if "fd_guba_validate" in html or "em_capt.js" in html:
-        raise RuntimeError("触发东财反爬验证，本次跳过")
-    raw = _extract_js_object(html, "post_article")
-    if not raw:
-        return []
-    try:
-        data = json.loads(raw)
-    except Exception:
-        return []
+    """取作者「追加」的内容(post_add_list)。这部分内容不在 userdynamiclistv2 的列表接口里，
+    只有 ArticleContent 接口（以前是帖子详情页的内嵌 JSON）才有。code 只用来拼链接。"""
+    link = make_link(code, post_id)
     items = []
-    for a in (data.get("post_add_list") or []):
+    for a in (fetch_article(post_id).get("post_add_list") or []):
         add_id = str(a.get("add_id") or "")
         if not add_id:
             continue
-        text = re.sub(r"<[^>]+>", "", a.get("add_text") or "").strip()
         items.append({
             "key": "A" + add_id,
             "kind": "追加",
             "icon": "📌",
             "time": (a.get("add_time") or "")[:19],
             "title": "",
-            "content": text,
+            "content": html_to_text(a.get("add_text")),
             "bar": "",
             "ctx_user": "",
             "ctx_text": "",
@@ -615,6 +625,7 @@ def check_user(cfg, state, user):
     new_items = [it for it in items if it["key"] not in seen]
     # 按时间排序，旧的先推
     new_items.sort(key=lambda x: x["time"])
+    complete_truncated(new_items, set(), on_error=lambda it, e: log("取全文失败 %s: %s" % (it["key"], e)))
     for it in new_items:
         title, content = build_message(name, it)
         send_push(cfg, title, content)

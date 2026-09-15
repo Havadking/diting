@@ -268,7 +268,7 @@
     color: var(--ink); font-size: 14.5px; line-height: 1.6;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   }
-  .card.open .txt { display: block; }
+  .card.open .txt { display: block; white-space: pre-line; }   /* 全文有段落换行，展开后保留 */
   .ctx .ctx-more { color: var(--ink-3); white-space: nowrap; }
   /* 被回复的那条评论：展开后显示在正文上方，左侧竖线区分"别人说的"和"博主说的" */
   .card .quote {

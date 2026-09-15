@@ -509,6 +509,7 @@ class MonitorCore:
                         self.set_status("抓取 %s 失败：%s" % (name, e))
                         continue
                     if items:
+                        self._complete_truncated(state, uid, name, items)
                         self._emit(state, uid, name, items, db)
                         if u.get("check_appends"):
                             self._register_append_watch(uid, name, items)
@@ -581,6 +582,15 @@ class MonitorCore:
                     pass
 
     # —— 帖子追加监视（只在后台线程读写 self._append_watch，不用加锁）——
+    def _complete_truncated(self, state, uid, name, items):
+        """列表接口把长帖截成 200 字摘要，新帖子在入列前去拿全文。首轮基线只补 _emit 会用到的最近 10 条，
+        免得开机时一个用户就打二十次全文接口。"""
+        seen = set(state.get(uid, []))
+        candidates = items if uid in self._seeded else sorted(items, key=lambda x: x["time"])[-10:]
+        monitor.complete_truncated(
+            candidates, seen,
+            on_error=lambda it, e: self.set_status("取 %s 全文失败：%s" % (name, str(e)[:80])))
+
     def _register_append_watch(self, uid, name, items):
         """把这一轮抓到的、发布在 24 小时内的帖子登记进监视表，之后定期查它有没有追加。"""
         now = time.time()

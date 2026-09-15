@@ -101,16 +101,18 @@ key, kind, icon, time, title, content, bar, ctx_user, ctx_text, link
 
 内存里的 `core.items` 上限 `MAX_ROWS`（1000），`snapshot(limit=300)` 首屏只给最近 300 条，更早的靠 `/api/items?before=<time>&before_key=<key>` 按 `(time, key)` 游标从库里翻——游标带 key 是为了同一秒多条时不重不漏。`monitor.py` 的独立命令行版目前不写这个库。
 
-### 帖子追加检查
+### 帖子全文补全与追加检查
 
-东方财富股吧允许作者在原帖发布后继续「追加」内容（前端显示成"作者更新以下内容"），但这部分文字**不在** `userdynamiclistv2` 列表接口的 `post_content` 字段里，只存在于帖子详情页 `guba.eastmoney.com/news,{code},{post_id}.html` 内嵌的 `var post_article={...};` JSON 里的 `post_add_list` 数组。`monitor.parse_post_appends(code, post_id)` 专门请求这个详情页，用 `_extract_js_object()` 手动配平大括号把这段 JSON 抠出来（正则的非贪婪匹配处理不了嵌套 JSON，见函数内注释）。`monitor.parse_news_link(link)` 从统一 item 的 `link` 字段反解出 `(code, post_id)`，避免给统一 item 字典再加新字段。
+`userdynamiclistv2` 列表接口的 `post_content` **超过 200 字就截成前 200 字 + `...`**，作者在原帖发布后「追加」的内容（前端显示成"作者更新以下内容"）也完全不在里面。两样都只有 `gbapi.eastmoney.com/content/api/Post/ArticleContent?postid=` 这个 JSON 接口给（`monitor.fetch_article(post_id)`，返回 `post` 字典：`post_content` 是全文 HTML，`post_add_list` 是追加数组；HTML 统一用 `monitor.html_to_text()` 转成带段落换行的纯文本）。以前用帖子详情页 `guba.eastmoney.com/news,{code},{post_id}.html` 抠内嵌 `post_article` JSON，那个页面第一次请求就可能被拦成反爬验证页，已换掉。`monitor.parse_news_link(link)` 从统一 item 的 `link` 字段反解出 `(code, post_id)`，避免给统一 item 字典再加新字段。
+
+**全文补全**：`monitor.complete_truncated(items, seen_keys)` 对 `is_truncated()` 判定为摘要（≥195 字且以 `...` 结尾）、且 key 不在 `state.json` 里的新帖子请求一次全文，就地替换 `content`；取不到就保留摘要，不影响入列/通知。`core._complete_truncated()` 在 `_emit()` 之前调它，首轮基线只补 `_emit` 会用到的最近 10 条，避免开机时一个用户就打二十次接口。老的 DB 记录不回填。
 
 只对用户在「用户设置」里勾了 `check_appends: true` 的股吧用户生效（推特/微博没有这个概念）。监视逻辑全在 `core.py` 后台线程 `_run_loop` 里，**故意不落盘**：
 
-- `self._append_watch`：`{post_id: {"uid","code","name","expires_at"}}`，只有后台线程会碰它，不用加锁。`_register_append_watch()` 把发布在 24 小时内的帖子登记进去；`_check_append_watch()` 定期（`append_check_interval_seconds`，默认 300 秒）挨个请求详情页，查到追加就用 `_emit()` 走跟其它来源一样的去重/首轮基线/通知流程（skey 是 `"ap:" + post_id`），并把 `expires_at` 顺延 24 小时；查不到就让它自然过期、下一轮被清掉。
+- `self._append_watch`：`{post_id: {"uid","code","name","expires_at"}}`，只有后台线程会碰它，不用加锁。`_register_append_watch()` 把发布在 24 小时内的帖子登记进去；`_check_append_watch()` 定期（`append_check_interval_seconds`，默认 300 秒）挨个请求 `ArticleContent`，查到追加就用 `_emit()` 走跟其它来源一样的去重/首轮基线/通知流程（skey 是 `"ap:" + post_id`），并把 `expires_at` 顺延 24 小时；查不到就让它自然过期、下一轮被清掉。
 - 重启会清空这张表——不是 bug，是有意简化：下次轮询重新拉到该用户的帖子时，只要还在"发布 24 小时内"就会被重新登记，不需要额外持久化这份运行时调度状态。真正的追加内容一旦查到，会像其它动态一样存进 `messages.db`，不会因为重启丢失。
 
-**详情页接口比列表接口(`userdynamiclistv2`)更容易触发东财反爬验证**（实测踩过：连续调过几次详情页后，同一个 IP 请求任何帖子详情页都会被拦成验证页而不是真实内容）。`parse_post_appends()` 识别出验证页特征（`fd_guba_validate`/`em_capt.js`）就主动抛异常，不会把验证页误当成"没有追加"。`core.py` 的 `_check_append_watch()` 配了失败退避：`self._append_fail_streak` 记连续失败次数，`_append_backoff_interval()` 让下次检查间隔按 `base * 2^streak` 翻倍拉长（封顶 2 小时），一旦有一轮成功就清零回到 `append_check_interval_seconds` 配的正常间隔。退避只作用于"查追加"这一个独立节奏，不影响股吧/推特/微博的正常轮询。
+**按帖子单独请求的接口比列表接口(`userdynamiclistv2`)更容易触发东财反爬验证**（详情页时代实测踩过：连续调过几次后，同一个 IP 请求任何帖子详情页都会被拦成验证页；换成 `ArticleContent` 后温和得多，但退避机制保留）。`fetch_article()` 识别出验证页特征（`fd_guba_validate`/`em_capt.js`）或 `rc != 1` 就主动抛异常，不会把验证页误当成"没有追加/没有全文"。`core.py` 的 `_check_append_watch()` 配了失败退避：`self._append_fail_streak` 记连续失败次数，`_append_backoff_interval()` 让下次检查间隔按 `base * 2^streak` 翻倍拉长（封顶 2 小时），一旦有一轮成功就清零回到 `append_check_interval_seconds` 配的正常间隔。退避只作用于"查追加"这一个独立节奏，不影响股吧/推特/微博的正常轮询。
 
 ### 线程模型
 
@@ -163,7 +165,7 @@ commit message 用 conventional commits 格式，说明"为什么"而非"改了�
 
 - 股吧发帖/转发：`i.eastmoney.com/api/guba/userdynamiclistv2`（`type=1`）。**必须用这个而非 `fullarticlelist`**——后者只返回财富号文章，会漏掉股吧短帖。
 - 股吧评论：`i.eastmoney.com/api/guba/myreply`
-- 股吧帖子追加：`guba.eastmoney.com/news,{code},{post_id}.html`（详情页，抠内嵌 `post_article` JSON，见上方「帖子追加检查」）
+- 股吧帖子全文/追加：`gbapi.eastmoney.com/content/api/Post/ArticleContent?postid={post_id}&plat=web&version=200&product=guba`（JSON，`post.post_content` 全文 HTML、`post.post_add_list` 追加，见上方「帖子全文补全与追加检查」）
 - 推特：外部 CLI `twitter user-posts @handle -n 40 --json`（`pipx install twitter-cli`），靠环境变量 `TWITTER_AUTH_TOKEN` / `TWITTER_CT0` 认证。子进程必须带 `_no_window_kwargs()` 隐藏控制台黑框。
 - 微博：`weibo.com/ajax/statuses/mymblog`，Cookie 从 `config.json` 的 `weibo_cookie` 读（至少含 `SUB`）。
 
