@@ -559,9 +559,60 @@
   .quit-box code { font-family: var(--mono); background: var(--card); padding: 1px 6px; border-radius: 4px; }
   .btn:disabled { opacity: .5; cursor: default; }
 
+  /* ---------- AI 日报页 ---------- */
+  .tb-actions .btn.active, .btn.active { background: var(--bg); border-color: var(--line-strong); color: var(--ink); }
+  .sum { max-width: 880px; margin: 0 auto; padding: 16px 28px 80px; }
+  .sum-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+  .sum-bar .who { display: flex; gap: 6px; flex-wrap: wrap; }
+  .sum-bar .who .chip { --c: var(--ink-2); --kbg: var(--card); }
+  .sum-bar .who .chip.on { --c: var(--uc, var(--accent)); --kbg: color-mix(in srgb, var(--uc, var(--accent)) 14%, var(--card)); }
+  .sum-bar .date { display: inline-flex; align-items: center; gap: 4px; }
+  .sum-bar .date input { height: 30px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--ink); font-family: var(--mono); font-size: 12.5px; }
+  .sum-bar .date .btn { padding: 0 8px; }
+  .sum-meta { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; font-size: 12px; color: var(--ink-3); margin-bottom: 10px; }
+  .sum-meta b { color: var(--ink-2); font-weight: 500; }
+  .sum-meta .warn { color: var(--warn); }
+  .sum-body {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius, 10px); padding: 18px 22px;
+    font-size: 14px; line-height: 1.7; color: var(--ink); overflow-x: auto;
+  }
+  .sum-body h1, .sum-body h2, .sum-body h3 { font-size: 15px; margin: 18px 0 8px; font-weight: 600; }
+  .sum-body h1:first-child, .sum-body h2:first-child, .sum-body h3:first-child, .sum-body p:first-child { margin-top: 0; }
+  .sum-body p { margin: 6px 0; }
+  .sum-body ul, .sum-body ol { padding-left: 22px; margin: 6px 0; }
+  .sum-body li { margin: 3px 0; }
+  .sum-body table { border-collapse: collapse; width: 100%; margin: 8px 0 12px; font-size: 13px; }
+  .sum-body th, .sum-body td { border: 1px solid var(--line); padding: 6px 9px; text-align: left; vertical-align: top; }
+  .sum-body th { background: var(--bg); font-weight: 600; white-space: nowrap; }
+  .sum-body code { font-family: var(--mono); font-size: 12.5px; background: var(--bg); padding: 1px 5px; border-radius: 4px; }
+  .sum-body blockquote { margin: 6px 0; padding: 2px 12px; border-left: 3px solid var(--line-strong); color: var(--ink-2); }
+  .sum-body hr { border: none; border-top: 1px solid var(--line); margin: 14px 0; }
+  .sum-wait { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 50px 0; color: var(--ink-3); font-size: 13px; }
+  .sum-wait i { width: 22px; height: 22px; border: 2px solid var(--line-strong); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .sum-err { background: color-mix(in srgb, var(--danger, #c0392b) 10%, var(--card)); border: 1px solid color-mix(in srgb, var(--danger, #c0392b) 40%, var(--line)); border-radius: 8px; padding: 12px 16px; font-size: 13px; color: var(--ink); }
+
+  /* AI 设置抽屉 */
+  .ai-prof { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin: 0 24px 10px; background: var(--bg); display: grid; gap: 8px; }
+  .ai-prof.on { border-color: var(--accent); }
+  .ai-prof .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .ai-prof .row label { font-size: 12px; color: var(--ink-3); width: 56px; flex: none; }
+  .ai-prof .row .input-text { flex: 1; min-width: 160px; }
+  .ai-prof .row .input-text.mono { font-family: var(--mono); }
+  .ai-prof .head { display: flex; align-items: center; gap: 10px; }
+  .ai-prof .head .radio { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-2); cursor: pointer; }
+  .ai-prof .head .hint { font-size: 11.5px; color: var(--ink-3); font-family: var(--mono); }
+  .ai-prof .ops { display: flex; gap: 8px; justify-content: flex-end; }
+  .ai-prompt { margin: 6px 24px 10px; }
+  .ai-prompt h4 { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
+  .ai-prompt p { margin: 0 0 6px; font-size: 12px; color: var(--ink-3); }
+  .ai-prompt textarea { width: 100%; min-height: 150px; box-sizing: border-box; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--ink); font-size: 12.5px; line-height: 1.55; font-family: inherit; resize: vertical; }
+  .ai-prompt textarea:focus { outline: none; border-color: var(--accent); }
+
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
   @media (max-width: 900px) {
     .feed { padding: 8px 14px 80px; }
+    .sum { padding: 12px 14px 80px; }
     .card .body { padding: 10px 12px 11px 12px; }
     .search-wrap { max-width: 170px; }
   }

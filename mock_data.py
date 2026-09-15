@@ -114,6 +114,24 @@ class MockCore(core.MonitorCore):
     def poll_config(self):
         return {"poll_interval_seconds": self.interval, "append_check_interval_seconds": 300}
 
+    # AI 日报：不读写 config.json / messages.db，配置和缓存都放内存，进程退出即丢
+    def load_day(self, name, date):
+        with self.lock:
+            return [dict(e) for e in self.items if e["name"] == name and e["time"][:10] == date]
+
+    def get_summary(self, name, date):
+        return getattr(self, "_summaries", {}).get((name, date))
+
+    def put_summary(self, rec):
+        self.__dict__.setdefault("_summaries", {})[(rec["name"], rec["date"])] = rec
+
+    def get_ai_config(self):
+        return getattr(self, "_ai", None) or {"active": "", "profiles": [], "prompt": ""}
+
+    def save_ai_config(self, ai):
+        self._ai = ai
+        return None
+
     def db_count(self):
         return len(self.items) + len(self._older())
 

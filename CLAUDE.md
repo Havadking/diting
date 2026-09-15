@@ -25,8 +25,8 @@ python test_once.py              # 抓取自检：打印 config.json 里第一�
 没有构建步骤、没有 lint 配置、**没有测试框架**。验证改动的手段：
 
 ```bash
-python -c "import py_compile; [py_compile.compile(f, doraise=True) for f in ('server.py','core.py','app.py','monitor.py','mock_data.py')]"   # 语法检查
-python -m pyflakes server.py core.py app.py monitor.py mock_data.py    # 未用导入/未定义名字（pip install pyflakes）
+python -c "import py_compile; [py_compile.compile(f, doraise=True) for f in ('server.py','core.py','app.py','monitor.py','mock_data.py','summary.py')]"   # 语法检查
+python -m pyflakes server.py core.py app.py monitor.py mock_data.py summary.py    # 未用导入/未定义名字（pip install pyflakes）
 node -e "new Function(require('fs').readFileSync('web/app.js','utf8'))"  # 前端 JS 语法检查（有 node 的话）
 ```
 
@@ -37,7 +37,9 @@ node -e "new Function(require('fs').readFileSync('web/app.js','utf8'))"  # 前�
 `python server.py --mock --no-browser` 起来后，后端用 `curl 127.0.0.1:17777/api/snapshot` / `curl -N 127.0.0.1:17777/api/events` 看；前端直接开浏览器。
 `--mock-interval 2` 可以把随机推送加快到 2 秒一条。mock 数据在 `mock_data.py`，`MockCore` 继承 `MonitorCore` 只换掉数据源，订阅/广播/接口和真的一模一样。
 
-浏览器 DevTools Network 面板里除了 `127.0.0.1` 不该有任何外部请求——离线可用是硬性要求。
+浏览器 DevTools Network 面板里除了 `127.0.0.1` 不该有任何外部请求——离线可用是硬性要求（AI 日报是唯一例外，且只在点「生成」时由后端发请求）。
+
+验证 AI 日报不用真 key：起一个假的 OpenAI 兼容接口（收到 `POST /chat/completions` 就回固定 Markdown 的几十行 `BaseHTTPRequestHandler`），在页面「AI 设置」里把接口地址指到它；mock 模式下 AI 配置和日报缓存都在内存里，不会污染 `config.json`。
 
 注意：**后台标签页里 scroll 事件、IntersectionObserver、requestAnimationFrame 都不跑**，用 Claude 的浏览器面板（页面常常处于 hidden 状态）验证滚动相关行为时要先截一张图让页面变可见，否则会误判成没生效。
 
@@ -65,6 +67,7 @@ appmod.MonitorApp.start = lambda self, silent=False: None   # 跳过联网监控
 - **`core.py`** — `MonitorCore`：后台轮询线程、首轮基线/去重、追加监视、静音/合并/toast、写 `messages.db`、事件广播、读写用户设置。**无 UI 依赖，不许 import tkinter**。三个数据源全支持。
 - **`server.py` + `web/`** — 网页版，主要维护对象。`server.py` 是纯标准库 `ThreadingHTTPServer`，默认只绑 `127.0.0.1`（`--host 0.0.0.0` 开放局域网给平板/手机看），接口见 `docs/web-design.md` §5；`web/app.js` 是 React 18 + htm 写的单文件前端（htm 是标签模板函数，写法 `` html`<div class=${x}>` ``，不需要 JSX 编译）。所有 `POST` 校验 `Origin` 必须等于自己（拿 `Host` 头比，不是写死 127.0.0.1，所以局域网地址访问也能过），别去掉——这是防止别的网页 fetch 本地端口让程序退出的唯一防线。
 - **`app.py`** — 旧版 tkinter 窗口，只是 `MonitorCore` 的另一层壳：`subscribe()` 一个队列，消费事件画 Treeview。稳定后会删，**不要再往里加功能**。
+- **`summary.py`** — AI 日报：把某人某天的动态预处理、拼提示词、调 OpenAI 兼容接口（DeepSeek 等）。纯函数模块，不碰 core/线程/SQLite；`server.py` 的 `/api/ai/*` 编排它，缓存表 `summaries` 建在 `monitor.get_db()` 里，`MockCore` 覆写成内存版。`config.json` 的 `ai.profiles[].api_key` 明文只在后端，接口只回脱敏 `key_hint`。详见 `docs/onboarding-notes.md` §8.1。
 - **`monitor.py`** — 双重身份：① 被 `core.py` import 的抓取/解析核心；② 独立的命令行推送版（`main()`）。注意 **`monitor.py` 的命令行 `main()` 只处理股吧用户**，推特/微博是 GUI 独有的。改抓取逻辑时两边都受影响，改轮询逻辑时通常只动 `core.py`。
 
 `core.py` 顶部的 `ENABLE_TWITTER` / `ENABLE_WEIBO` 目前是 `False`——推特/微博功能暂时下线（不轮询、UI 也不提），但代码和 `monitor.py` 里的抓取逻辑都完整保留，改成 `True` 即可恢复。改任何"用户列表"相关的地方（`core.py` 的 `_run_loop`/`describe_config`/`list_users`/`save_users`、`app.py` `open_colors` 的 `rows`/`editable_users`）时留意这两个开关，别让隐藏的来源重新泄漏到 UI，也别让保存逻辑遍历到没渲染出来的用户而误清空他们的配置。`list_users()` 和 `save_users()` 用同一份"启用来源"列表就是为了这个。

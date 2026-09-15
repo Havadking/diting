@@ -251,6 +251,55 @@ class MonitorCore:
             self.item_keys.clear()
         self._broadcast("cleared", {})
 
+    # ---------- AI 日报（HTTP 线程调用，都是独立短连接） ----------
+    def load_day(self, name, date):
+        try:
+            db = monitor.get_db()
+        except Exception:
+            return []
+        try:
+            return monitor.load_day_messages(db, name, date)
+        finally:
+            db.close()
+
+    def get_summary(self, name, date):
+        try:
+            db = monitor.get_db()
+        except Exception:
+            return None
+        try:
+            return monitor.load_summary(db, name, date)
+        finally:
+            db.close()
+
+    def put_summary(self, rec):
+        db = monitor.get_db()
+        try:
+            monitor.save_summary(db, rec)
+        finally:
+            db.close()
+
+    def get_ai_config(self):
+        """config.json 的 "ai" 字段原样返回（含明文 key，脱敏由 server 层做）。没配就是空结构。"""
+        try:
+            cfg = monitor.load_config()
+        except Exception:
+            cfg = {}
+        ai = cfg.get("ai") or {}
+        return {"active": ai.get("active") or "", "profiles": list(ai.get("profiles") or []), "prompt": ai.get("prompt") or ""}
+
+    def save_ai_config(self, ai):
+        try:
+            cfg = monitor.load_config()
+        except Exception as e:
+            return "读取 config.json 失败：%s" % e
+        cfg["ai"] = ai
+        try:
+            monitor.save_config(cfg)
+        except Exception as e:
+            return "保存 config.json 失败：%s" % e
+        return None
+
     def describe_config(self):
         """状态栏那句「股吧 N 人(发帖+评论) · 间隔 60s」。读配置失败抛异常，由壳层兜底。"""
         cfg = monitor.load_config()

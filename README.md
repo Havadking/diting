@@ -34,6 +34,11 @@
 - 用户和轮询参数都能在页面「设置」抽屉里改，直接写回 `config.json`，不用重启。
 - 局域网访问：`--host 0.0.0.0` 后可以用平板/手机开同一个页面当小副屏（见下文）。
 
+**AI 日报**
+- 顶栏「日报」进入：选一个博主、选一天，点「生成日报」，让模型把这个人当天所有发帖/评论/追加整理成「一句话总览 → 大盘板块观点 → 个股操作台账（表格）→ 回答粉丝的个股判断 → 明日计划 → 其它」。评论会连同被回复者的原话一起喂给模型，不然「不能」「短线」这种回答没法理解。
+- 结果存进 `messages.db`，同一个人同一天只花一次钱；生成后又抓到新动态会提示可「重新生成」。
+- 日报页右上角齿轮打开 AI 设置：接口地址 / 模型 / API Key 自由添加多套、切换，「测试连接」可以先验一下；总结要求（提示词）也能改。任何 OpenAI 兼容接口都行（DeepSeek、通义千问、Kimi、OpenAI…），Key 只存在本机 `config.json`。这是全程序**唯一**会主动联外网（除东财外）的功能，只在你点「生成」时发请求。
+
 **代码里还有但默认关闭的**
 - 推特（X）和微博的抓取、解析都在 `monitor.py` 里，`core.py` 顶部的 `ENABLE_TWITTER` / `ENABLE_WEIBO` 改成 `True` 即可启用。推特依赖外部 CLI `twitter-cli` 和登录 cookie，微博需要 `config.json` 里的 `weibo_cookie`。这两个来源风控更严，默认关着。
 - `monitor.py` 单独运行是一个命令行版，用 Server酱 / PushPlus 推到微信，**只处理股吧用户**，也不写 `messages.db`。
@@ -91,6 +96,16 @@ python server.py
 - 底部改股吧轮询间隔和追加检查间隔。
 
 改动会写回 `config.json` 并立即生效。
+
+AI 接口在「日报」页右上角的齿轮里配，存到 `config.json` 的 `ai` 字段：
+
+```json
+"ai": {
+  "active": "p1",
+  "profiles": [{"id": "p1", "name": "DeepSeek", "base_url": "https://api.deepseek.com", "model": "deepseek-chat", "api_key": "sk-..."}],
+  "prompt": ""
+}
+```
 
 ### 直接改 `config.json`
 
@@ -153,13 +168,14 @@ python server.py
 ├── server.py            网页版入口：HTTP 服务 + API + SSE
 ├── core.py              监控核心：轮询线程、去重、追加监视、通知、SQLite
 ├── monitor.py           抓取与解析（股吧 / 推特 / 微博）、SQLite 封装；单独运行是命令行推送版
+├── summary.py           AI 日报：预处理当天动态、拼提示词、调 OpenAI 兼容接口
 ├── mock_data.py         --mock 用的示例数据和 MockCore
 ├── app.py               旧版 tkinter 窗口
 ├── test_once.py         抓取自检
 ├── run_gui.bat / run_gui_lan.bat / run_gui_tk.bat / run.bat
 ├── config.example.json
 ├── docs/
-└── web/                 前端：index.html、app.js、app.css、图标、manifest、vendor/（React、htm、两个字体）
+└── web/                 前端：index.html、app.js、app.css、图标、manifest、vendor/（React、htm、marked、两个字体）
 ```
 
 ---

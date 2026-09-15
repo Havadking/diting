@@ -14,6 +14,8 @@ import argparse
 import json
 import os
 import queue
+import re
+import uuid
 import socket
 import sys
 import threading
@@ -22,6 +24,8 @@ import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
+
+import summary as summary_mod
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(BASE_DIR, "web")
@@ -111,6 +115,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._api_probe_user(parse_qs(u.query))
         if path == "/api/events":
             return self._api_events()
+        if path == "/api/ai/settings":
+            return self._api_ai_settings_get()
+        if path == "/api/ai/summary":
+            return self._api_ai_summary_get(parse_qs(u.query))
         self._send_error_json(HTTPStatus.NOT_FOUND, "not found")
 
     def do_POST(self):
@@ -128,6 +136,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._api_users(body)
         if path == "/api/users/manage":
             return self._api_users_manage(body)
+        if path == "/api/ai/settings":
+            return self._api_ai_settings_post(body)
+        if path == "/api/ai/test":
+            return self._api_ai_test(body)
+        if path == "/api/ai/summary":
+            return self._api_ai_summary_post(body)
         self._send_error_json(HTTPStatus.NOT_FOUND, "not found")
 
 
@@ -198,6 +212,102 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json({"ok": False, "error": str(e)})
 
+
+    # ---- AI 日报 ----
+    DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+    @staticmethod
+    def _mask_key(key):
+        key = key or ""
+        return (key[:3] + "…" + key[-4:]) if len(key) > 8 else ("…" if key else "")
+
+    def _api_ai_settings_get(self):
+        """返回给前端的配置里 api_key 只给脱敏后的 key_hint，明文永远不出后端。"""
+        ai = self.core.get_ai_config()
+        profiles = [{"id": p.get("id", ""), "name": p.get("name", ""), "base_url": p.get("base_url", ""),
+                     "model": p.get("model", ""), "key_hint": self._mask_key(p.get("api_key")),
+                     "has_key": bool(p.get("api_key"))} for p in ai["profiles"]]
+        self._send_json({"ok": True, "active": ai["active"], "profiles": profiles, "prompt": ai["prompt"],
+                         "default_prompt": summary_mod.DEFAULT_REQUEST})
+
+    def _merge_profiles(self, incoming):
+        """前端提交的 profile 若没带 api_key（没改），沿用旧配置里同 id 的 key。返回 (profiles, error)。"""
+        old = {p.get("id"): p for p in self.core.get_ai_config()["profiles"]}
+        out = []
+        for p in incoming:
+            if not isinstance(p, dict):
+                return None, "profile 格式不对"
+            pid = str(p.get("id") or "").strip() or uuid.uuid4().hex[:8]
+            key = p.get("api_key")
+            if key is None or key == "":
+                key = (old.get(pid) or {}).get("api_key", "")
+            out.append({"id": pid, "name": str(p.get("name") or "").strip() or "未命名",
+                        "base_url": str(p.get("base_url") or "").strip(),
+                        "model": str(p.get("model") or "").strip(), "api_key": str(key).strip()})
+        return out, None
+
+    def _api_ai_settings_post(self, body):
+        profiles = body.get("profiles")
+        if not isinstance(profiles, list):
+            return self._send_error_json(HTTPStatus.BAD_REQUEST, "profiles must be a list")
+        merged, err = self._merge_profiles(profiles)
+        if err:
+            return self._send_error_json(HTTPStatus.BAD_REQUEST, err)
+        active = str(body.get("active") or "")
+        if merged and active not in {p["id"] for p in merged}:
+            active = merged[0]["id"]
+        err = self.core.save_ai_config({"active": active if merged else "", "profiles": merged,
+                                        "prompt": str(body.get("prompt") or "").strip()})
+        if err:
+            return self._send_json({"ok": False, "error": err}, HTTPStatus.INTERNAL_SERVER_ERROR)
+        self._api_ai_settings_get()
+
+    def _api_ai_test(self, body):
+        """设置页「测试连接」。可以测还没保存的配置：body 直接带 profile；没带 key 就用已保存的。"""
+        merged, err = self._merge_profiles([body.get("profile") or {}])
+        if err:
+            return self._send_error_json(HTTPStatus.BAD_REQUEST, err)
+        try:
+            reply = summary_mod.ping(merged[0])
+            self._send_json({"ok": True, "reply": reply})
+        except Exception as e:
+            self._send_json({"ok": False, "error": str(e)})
+
+    def _api_ai_summary_get(self, qs):
+        name = (qs.get("name") or [""])[0].strip()
+        date = (qs.get("date") or [""])[0].strip()
+        if not name or not self.DATE_RE.match(date):
+            return self._send_error_json(HTTPStatus.BAD_REQUEST, "name/date required")
+        rec = self.core.get_summary(name, date)
+        current = len(summary_mod.preprocess(self.core.load_day(name, date)))
+        self._send_json({"ok": True, "summary": rec, "current_count": current})
+
+    def _api_ai_summary_post(self, body):
+        """生成（或强制重新生成）日报。同步调模型，通常 20~60 秒，handler 线程独立，不影响别的请求。"""
+        name = str(body.get("name") or "").strip()
+        date = str(body.get("date") or "").strip()
+        if not name or not self.DATE_RE.match(date):
+            return self._send_error_json(HTTPStatus.BAD_REQUEST, "name/date required")
+        ai = self.core.get_ai_config()
+        profile = next((p for p in ai["profiles"] if p.get("id") == ai["active"]), None) or (ai["profiles"] or [None])[0]
+        if not profile:
+            return self._send_json({"ok": False, "error": "还没配置 AI 接口，先在「AI 设置」里添加一个"})
+        if not body.get("force"):
+            rec = self.core.get_summary(name, date)
+            if rec:
+                return self._send_json({"ok": True, "summary": rec, "cached": True})
+        items = self.core.load_day(name, date)
+        try:
+            rec = summary_mod.summarize(profile, name, date, items, ai["prompt"])
+        except Exception as e:
+            return self._send_json({"ok": False, "error": str(e)})
+        rec = {"name": name, "date": date, "model": rec["model"], "created_at": rec["created_at"],
+               "item_count": rec["item_count"], "text": rec["text"]}
+        try:
+            self.core.put_summary(rec)
+        except Exception as e:
+            self.core.set_status("日报缓存写入失败：%s" % e)
+        self._send_json({"ok": True, "summary": rec, "cached": False})
 
     # ---- 静态文件 ----
     def _serve_static(self, rel):

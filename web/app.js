@@ -43,6 +43,10 @@
     sun: svg('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'),
     power: svg('<path d="M18.4 6.6a9 9 0 1 1-12.8 0M12 2v10"/>'),
     down: svg('<path d="M12 5v14M5 12l7 7 7-7"/>'),
+    doc: svg('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>'),
+    spark: svg('<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM5 3v4M3 5h4M19 17v4M17 19h4"/>'),
+    left: svg('<path d="M15 18l-6-6 6-6"/>'),
+    right: svg('<path d="M9 18l6-6-6-6"/>'),
     more: svg('<circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/>', "currentColor"),
     expand: svg('<path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/>'),
     shrink: svg('<path d="M3 8h5V3M21 8h-5V3M3 16h5v5M21 16h-5v5"/>'),
@@ -585,9 +589,187 @@
   }
 
 
+  /* ---------- AI 日报 ---------- */
+  const shiftDate = (d, n) => {
+    const t = new Date(d + "T00:00:00"); t.setDate(t.getDate() + n);
+    const p = x => String(x).padStart(2, "0");
+    return t.getFullYear() + "-" + p(t.getMonth() + 1) + "-" + p(t.getDate());
+  };
+  // 模型输出的 Markdown 里若夹带 HTML 标签一律转义掉再交给 marked，页面上只认 Markdown 语法
+  const renderMd = md => (window.marked ? window.marked.parse((md || "").replace(/</g, "&lt;").replace(/>/g, "&gt;"), { breaks: true }) : "");
+
+  function AiDrawer({ onClose, toast, onSaved }) {
+    const [cfg, setCfg] = useState(null);
+    const [saving, setSaving] = useState(false);
+    const [testing, setTesting] = useState(null);
+
+    useEffect(() => {
+      fetch("/api/ai/settings").then(r => r.json()).then(d => {
+        setCfg({ active: d.active, prompt: d.prompt || "", defaultPrompt: d.default_prompt || "",
+                 profiles: (d.profiles || []).map(p => ({ ...p, api_key: "" })) });
+      }).catch(e => toast("读取 AI 设置失败：" + e.message, "error"));
+    }, []);
+    useEffect(() => {
+      const h = e => e.key === "Escape" && onClose();
+      window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h);
+    }, [onClose]);
+
+    if (!cfg) return html`<div class="scrim" onClick=${onClose}/><aside class="drawer" role="dialog"><header><h3>AI 设置</h3></header><p class="empty">读取中…</p></aside>`;
+
+    const upd = (i, patch) => setCfg(c => ({ ...c, profiles: c.profiles.map((p, j) => j === i ? { ...p, ...patch } : p) }));
+    const add = () => setCfg(c => {
+      const id = "p" + Date.now().toString(36);
+      return { ...c, active: c.active || id, profiles: [...c.profiles, { id, name: "DeepSeek", base_url: "https://api.deepseek.com", model: "deepseek-chat", api_key: "", key_hint: "", has_key: false }] };
+    });
+    const del = i => setCfg(c => {
+      const profiles = c.profiles.filter((_, j) => j !== i);
+      const active = profiles.some(p => p.id === c.active) ? c.active : (profiles[0] ? profiles[0].id : "");
+      return { ...c, profiles, active };
+    });
+    const test = async (p) => {
+      setTesting(p.id);
+      try {
+        const d = await post("/api/ai/test", { profile: p });
+        toast("连通：" + (d.reply || "").slice(0, 30));
+      } catch (e) { toast("测试失败：" + e.message, "error"); }
+      finally { setTesting(null); }
+    };
+    const save = async () => {
+      setSaving(true);
+      try {
+        await post("/api/ai/settings", { active: cfg.active, prompt: cfg.prompt, profiles: cfg.profiles.map(p => ({ id: p.id, name: p.name, base_url: p.base_url, model: p.model, api_key: p.api_key || undefined })) });
+        toast("AI 设置已保存");
+        onSaved && onSaved();
+        onClose();
+      } catch (e) { toast("保存失败：" + e.message, "error"); }
+      finally { setSaving(false); }
+    };
+
+    return html`
+      <div class="scrim" onClick=${onClose}/>
+      <aside class="drawer" role="dialog" aria-label="AI 设置">
+        <header>
+          <div>
+            <h3>AI 设置</h3>
+            <p>OpenAI 兼容接口都能用：DeepSeek / 千问 / Kimi / OpenAI …；Key 只存在本机 config.json</p>
+          </div>
+          <span class="spacer"/>
+          <button class="btn quiet" onClick=${onClose}>关闭</button>
+        </header>
+        <div class="list" style=${{ padding: "12px 0 8px" }}>
+          ${cfg.profiles.map((p, i) => html`
+            <div key=${p.id} class=${"ai-prof" + (cfg.active === p.id ? " on" : "")}>
+              <div class="head">
+                <label class="radio"><input type="radio" name="ai-active" checked=${cfg.active === p.id} onChange=${() => setCfg(c => ({ ...c, active: p.id }))}/>使用这个</label>
+                <input class="input-text" style=${{ width: "140px" }} placeholder="名称" value=${p.name} onInput=${e => upd(i, { name: e.target.value })}/>
+                <span class="spacer"/>
+                ${p.has_key && !p.api_key && html`<span class="hint">Key ${p.key_hint}</span>`}
+              </div>
+              <div class="row"><label>接口地址</label><input class="input-text mono" placeholder="https://api.deepseek.com" value=${p.base_url} onInput=${e => upd(i, { base_url: e.target.value })}/></div>
+              <div class="row"><label>模型</label><input class="input-text mono" placeholder="deepseek-chat" value=${p.model} onInput=${e => upd(i, { model: e.target.value })}/></div>
+              <div class="row"><label>API Key</label><input class="input-text mono" type="password" autocomplete="off" placeholder=${p.has_key ? "留空则不改" : "sk-…"} value=${p.api_key} onInput=${e => upd(i, { api_key: e.target.value })}/></div>
+              <div class="ops">
+                <button class="btn quiet" disabled=${testing === p.id} onClick=${() => test(p)}>${testing === p.id ? "测试中…" : "测试连接"}</button>
+                <button class="btn quiet" onClick=${() => del(i)}>删除</button>
+              </div>
+            </div>`)}
+          <div style=${{ padding: "0 24px 8px" }}><button class="btn" onClick=${add}>+ 添加接口配置</button></div>
+          <div class="ai-prompt">
+            <h4>总结要求（可改）</h4>
+            <p>留空用默认。博主/日期/条数和当天的原始动态由程序自动拼在这段后面。</p>
+            <textarea placeholder=${cfg.defaultPrompt} value=${cfg.prompt} onInput=${e => setCfg(c => ({ ...c, prompt: e.target.value }))}/>
+            ${cfg.prompt && html`<button class="btn quiet" style=${{ marginTop: "6px" }} onClick=${() => setCfg(c => ({ ...c, prompt: "" }))}>恢复默认</button>`}
+          </div>
+        </div>
+        <footer>
+          <button class="btn" onClick=${onClose}>取消</button>
+          <button class="btn primary" disabled=${saving} onClick=${save}>${saving ? "保存中…" : "保存"}</button>
+        </footer>
+      </aside>`;
+  }
+
+  function SummaryView({ users, initialUser, toast, onOpenAi, aiVersion }) {
+    const [who, setWho] = useState(() => initialUser || (users[0] && users[0].name) || "");
+    const [date, setDate] = useState(today);
+    const [rec, setRec] = useState(null);         // 缓存的/刚生成的日报
+    const [count, setCount] = useState(null);     // 当天当前有效条数
+    const [busy, setBusy] = useState(false);
+    const [err, setErr] = useState("");
+    const seq = useRef(0);
+
+    useEffect(() => { if (!who && users[0]) setWho(users[0].name); }, [users]);
+
+    // 切人/切日期：先看有没有缓存
+    useEffect(() => {
+      if (!who) return;
+      const my = ++seq.current;
+      setRec(null); setCount(null); setErr("");
+      fetch("/api/ai/summary?name=" + encodeURIComponent(who) + "&date=" + date).then(r => r.json()).then(d => {
+        if (my !== seq.current) return;
+        if (!d.ok) throw new Error(d.error || "读取失败");
+        setRec(d.summary || null); setCount(d.current_count);
+      }).catch(e => my === seq.current && setErr(e.message));
+    }, [who, date, aiVersion]);
+
+    const gen = async (force) => {
+      if (!who) return;
+      const my = ++seq.current;
+      setBusy(true); setErr("");
+      try {
+        const d = await post("/api/ai/summary", { name: who, date, force: !!force });
+        if (my !== seq.current) return;
+        setRec(d.summary);
+        setCount(d.summary.item_count);
+        if (!d.cached) toast("日报已生成");
+      } catch (e) {
+        if (my === seq.current) setErr(e.message);
+      } finally { setBusy(false); }
+    };
+
+    const stale = rec && count !== null && count > (rec.item_count || 0);
+    return html`
+      <div class="sum">
+        <div class="sum-bar">
+          <div class="who">
+            ${users.map(u => html`
+              <button key=${u.uid} class=${"chip" + (who === u.name ? " on" : "")} style=${u.color ? { "--uc": u.color } : undefined}
+                      onClick=${() => setWho(u.name)}><i/><span>${u.name}</span></button>`)}
+          </div>
+          <span class="spacer"/>
+          <div class="date">
+            <button class="btn quiet" title="前一天" onClick=${() => setDate(d => shiftDate(d, -1))}>${I.left}</button>
+            <input type="date" value=${date} max=${today()} onInput=${e => e.target.value && setDate(e.target.value)}/>
+            <button class="btn quiet" title="后一天" disabled=${date >= today()} onClick=${() => setDate(d => shiftDate(d, 1))}>${I.right}</button>
+          </div>
+          <button class="btn primary" disabled=${busy || !who || count === 0} onClick=${() => gen(!!rec)}>
+            ${I.spark}<span class="lbl">${busy ? "生成中…" : rec ? "重新生成" : "生成日报"}</span>
+          </button>
+          <button class="btn quiet" title="AI 接口与提示词设置" onClick=${onOpenAi}>${I.gear}</button>
+        </div>
+
+        <div class="sum-meta">
+          <span>当天有效动态 <b>${count === null ? "…" : count}</b> 条</span>
+          ${rec && html`<span>生成于 <b>${rec.created_at}</b></span><span>模型 <b>${rec.model || "—"}</b></span><span>基于 <b>${rec.item_count}</b> 条</span>`}
+          ${stale && html`<span class="warn">生成后又抓到 ${count - rec.item_count} 条新动态，可点「重新生成」</span>`}
+        </div>
+
+        ${busy && html`<div class="sum-wait"><i/><span>正在让模型读 ${count || ""} 条动态，通常 20~60 秒…</span></div>`}
+        ${!busy && err && html`<div class="sum-err">${err}</div>`}
+        ${!busy && !err && rec && html`<div class="sum-body" dangerouslySetInnerHTML=${{ __html: renderMd(rec.text) }}/>`}
+        ${!busy && !err && !rec && count !== null && html`
+          <p class="empty">${count === 0 ? `${who} 在 ${date} 没有可总结的动态。` : `还没有生成过 ${who} 在 ${date} 的日报，点右上角「生成日报」。`}</p>`}
+        ${!users.length && html`<p class="empty">还没有监控用户。</p>`}
+      </div>`;
+  }
+
+
   function App() {
     const [s, dispatch] = useReducer(reducer, initial);
     const [drawer, setDrawer] = useState(false);
+    const [aiDrawer, setAiDrawer] = useState(false);
+    const [aiVersion, setAiVersion] = useState(0);
+    const [view, setView] = useState(() => store.get("diting.view") === "summary" ? "summary" : "feed");
+    const toggleView = () => setView(v => { const n = v === "feed" ? "summary" : "feed"; store.set("diting.view", n); return n; });
     const [menu, setMenu] = useState(false);
     const [theme, setTheme] = useState(() => { const t = store.get("diting.theme", "system"); return THEMES.includes(t) ? t : "system"; });
     useEffect(() => { applyTheme(theme); store.set("diting.theme", theme); }, [theme]);
@@ -985,6 +1167,7 @@
             <button class="btn" title=${st.running ? "停止监控" : "开始监控"} onClick=${act.toggleRun} disabled=${!s.connected}>
               ${st.running ? I.pause : I.play}<span class="lbl">${st.running ? "停止监控" : "开始监控"}</span>
             </button>
+            <button class=${"btn" + (view === "summary" ? " active" : "")} title=${view === "summary" ? "返回动态列表" : "AI 日报：让模型总结某人一天的动态"} onClick=${toggleView} disabled=${!s.loaded}>${I.doc}<span class="lbl">${view === "summary" ? "动态" : "日报"}</span></button>
             <button class="btn" title="用户设置" onClick=${() => setDrawer(true)} disabled=${!s.loaded}>${I.gear}<span class="lbl">设置</span></button>
             <button class="btn quiet only-wide" title="测试通知" onClick=${act.test}>${I.bell}</button>
             <button class="btn quiet only-wide" title="清空列表" onClick=${act.clear}>${I.trash}</button>
@@ -1045,7 +1228,8 @@
 
         <main class="main" ref=${mainRef}>
           ${s.loaded && !s.connected && !s.quit && html`<div class="banner">已与后台断开，正在重连…（重连后会自动补齐漏掉的动态）</div>`}
-          <div class="feed">
+          ${view === "summary" && s.loaded && html`<${SummaryView} users=${s.users} initialUser=${filter.user} toast=${toast} onOpenAi=${() => setAiDrawer(true)} aiVersion=${aiVersion}/>`}
+          <div class="feed" hidden=${view === "summary"}>
             ${searchDb !== null && html`
               <div class="search-banner">
                 <span>在历史数据库中找到 <b>${searchDb.length}</b> 条关于 "<b>${query}</b>" 的记录</span>
@@ -1070,10 +1254,11 @@
             ${s.loaded && !s.items.length && html`<p class="empty">还没有任何动态。</p>`}
             ${s.loaded && s.items.length > 0 && !filteredShown.length && html`<p class="empty">当前筛选/搜索下没有动态。<button class="link" onClick=${() => { clearSearch(); setFilter({ user: null, kindOff: new Set() }); }}>清除筛选与搜索</button></p>`}
           </div>
-          ${pendingBelow > 0 && html`<button class="fab" onClick=${() => scrollToBottom(true)}>${I.down}<span>${pendingBelow} 条新动态</span></button>`}
+          ${view === "feed" && pendingBelow > 0 && html`<button class="fab" onClick=${() => scrollToBottom(true)}>${I.down}<span>${pendingBelow} 条新动态</span></button>`}
         </main>
 
         ${drawer && html`<${Drawer} users=${s.users} config=${s.config} sound=${sound} onToggleSound=${setSound} onClose=${() => setDrawer(false)} onSaved=${() => fetchSnapshot(dispatch).catch(() => {})} toast=${toast}/>`}
+        ${aiDrawer && html`<${AiDrawer} onClose=${() => setAiDrawer(false)} toast=${toast} onSaved=${() => setAiVersion(v => v + 1)}/>`}
         <${Toast} msg=${msg}/>
         ${s.quit && html`
           <div class="scrim quit">

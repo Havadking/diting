@@ -243,6 +243,21 @@ my_stop = self.stop_event                # 新线程只认这个局部引用
 | POST | `/api/control` | `start` / `stop` / `clear` / `test_toast` / `quit` |
 | POST | `/api/users` | 旧版配色/静音/查追加保存（按 name 匹配） |
 | POST | `/api/users/manage` | 新版统一管理：`add` / `delete` / `update_all`（含轮询参数），前端设置抽屉走这个 |
+| GET/POST | `/api/ai/settings` | AI 接口配置（`config.json` 的 `ai` 字段）；GET 只给脱敏 key，POST 不带 key 表示沿用旧的 |
+| POST | `/api/ai/test` | 「测试连接」 |
+| GET/POST | `/api/ai/summary` | AI 日报：GET 读缓存 + 当前条数，POST 生成（`force` 强制重生成）。见 §8.1 |
+
+### 8.1 AI 日报（`summary.py`）
+
+纯函数模块，不碰 core / 线程：`build_prompt(name, date, items, request)` 把一天的展示条目（`messages.db` 行）预处理后拼成提示词，`chat(profile, system, user)` 用 `urllib` 打 OpenAI 兼容的 `{base_url}/chat/completions`（DeepSeek / 千问 / Kimi / OpenAI 一套代码通吃）。**预处理里几个有意的决定**：
+
+- 评论必须带上被回复者的原话（`quote_user/quote_text` → `问(某人): … → 答: …`），否则「不能」「短线」这种回答模型没法理解。
+- 「转发自己的帖」和同一分钟的「追加」正文完全一样，只留转发；`(无正文)`（纯图片）直接丢。
+- `$诺德股份(SH600110)$` → `诺德股份(600110)`；`[大笑]` 这类表情标记保留（是语气信息，也不费 token）。
+- 争吵/闲聊**不在预处理里删**，交给提示词归到「其它」一句带过——争吵里偶尔有信息（"两个都是负成本"）。
+- 一天 70~150 条 ≈ 5~8k 字符，一次请求塞得下，不分块。
+
+server 层：缓存表 `summaries(name, date) → text/model/created_at/item_count`（建表在 `get_db()` 里，和 `messages` 一起）；HTTP 线程独立短连接（`core.load_day / get_summary / put_summary`）；`MockCore` 覆写成内存版，配置和缓存都不落盘。`config.json` 的 `ai.profiles[].api_key` 明文只在后端，GET 只回脱敏的 `key_hint`；前端 POST 不带 key 表示"没改"，server 沿用同 id 的旧 key。前端 `marked`（本地 vendor）渲染 Markdown，先把 `<` `>` 转义掉再交给它，页面上只认 Markdown 语法。这是整个程序**除东财外唯一会主动联外网**的功能，只在用户点「生成」时发请求。
 
 几个**别去掉**的实现细节：
 

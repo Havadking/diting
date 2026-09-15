@@ -123,6 +123,11 @@ class MonitorCore:
 | GET | `/api/events` | — | SSE，`event: <type>\ndata: <json>\n\n`；连上先发一条 `status`；每 25 s 发 `: ping` 保活 |
 | POST | `/api/control` | `{"action":"start"\|"stop"\|"clear"\|"test_toast"\|"quit"}` | `{"ok":true}`；`quit` 回复后 0.5 s 调 `os._exit(0)` |
 | POST | `/api/users` | `{"users":[{name,color,mute,check_appends}]}` | `{"ok":true}`；只写回请求里出现的用户，沿用现在"不遍历没渲染出来的用户"的规则（推特/微博下线期间不能被误清空） |
+| GET | `/api/ai/settings` | — | `{active, profiles:[{id,name,base_url,model,key_hint,has_key}], prompt, default_prompt}`；`api_key` 明文永远不出后端，只给脱敏的 `key_hint` |
+| POST | `/api/ai/settings` | `{active, prompt, profiles:[{id?,name,base_url,model,api_key?}]}` | 同 GET；profile 不带 `api_key` 表示"没改"，沿用旧配置里同 id 的 key |
+| POST | `/api/ai/test` | `{profile}` | `{"ok":true,"reply"}`；发一条极短的请求验证接口能通，可以测还没保存的配置 |
+| GET | `/api/ai/summary?name=&date=` | — | `{summary: 缓存的日报或 null, current_count: 当天现在的有效条数}` |
+| POST | `/api/ai/summary` | `{name, date, force?}` | `{summary:{name,date,model,created_at,item_count,text}, cached}`；同步调模型，通常 20~60 秒；有缓存且不 `force` 就直接返回缓存 |
 
 `item` 字段与 `messages.db` 一致：`key, name, kind, icon, time, bar, content, link`。打开原帖直接前端 `<a target="_blank">`，不经过后端。
 
@@ -162,6 +167,7 @@ App
 - `diting.theme` `system | light | dark`
 - `diting.collapsed` 手动折叠过的日期（只记非今天的）
 - `diting.filter` 当前用户/类型筛选
+- `diting.view` `feed | summary`（顶栏「日报」按钮切换主区视图）
 
 ### 响应式断点
 

@@ -117,6 +117,16 @@ def get_db():
     for col in ("quote_user", "quote_text"):
         if col not in have:
             conn.execute("ALTER TABLE messages ADD COLUMN %s TEXT" % col)
+    # AI 日报缓存：同一个人同一天只花一次钱；item_count 记生成时喂了多少条，前端据此提示"又有新动态，要不要重新生成"
+    conn.execute("""CREATE TABLE IF NOT EXISTS summaries (
+        name TEXT NOT NULL,
+        date TEXT NOT NULL,
+        model TEXT,
+        created_at TEXT NOT NULL,
+        item_count INTEGER,
+        text TEXT,
+        PRIMARY KEY (name, date)
+    )""")
     conn.commit()
     return conn
 
@@ -156,6 +166,29 @@ def load_messages_before(conn, before_time, before_key, limit=200):
     rows = _rows_to_dicts(cur)
     rows.reverse()
     return rows
+
+
+def load_day_messages(conn, name, date):
+    """某个人某一天（本地日期，YYYY-MM-DD）的全部动态，按时间升序。给 AI 日报用。"""
+    cur = conn.execute(
+        "SELECT " + _SELECT_COLS + " FROM messages WHERE name = ? AND time >= ? AND time < ? ORDER BY time, key",
+        (name, date + " 00:00:00", date + " 23:59:60"))
+    return _rows_to_dicts(cur)
+
+
+SUMMARY_COLS = ["name", "date", "model", "created_at", "item_count", "text"]
+
+
+def load_summary(conn, name, date):
+    row = conn.execute("SELECT " + ", ".join(SUMMARY_COLS) + " FROM summaries WHERE name = ? AND date = ?",
+                       (name, date)).fetchone()
+    return dict(zip(SUMMARY_COLS, row)) if row else None
+
+
+def save_summary(conn, rec):
+    conn.execute("INSERT OR REPLACE INTO summaries (" + ", ".join(SUMMARY_COLS) + ") VALUES (?, ?, ?, ?, ?, ?)",
+                 tuple(rec.get(c) for c in SUMMARY_COLS))
+    conn.commit()
 
 
 def count_messages(conn):
