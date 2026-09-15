@@ -182,7 +182,9 @@ SUMMARY_COLS = ["name", "date", "model", "created_at", "item_count", "text"]
 def load_summary(conn, name, date):
     row = conn.execute("SELECT " + ", ".join(SUMMARY_COLS) + " FROM summaries WHERE name = ? AND date = ?",
                        (name, date)).fetchone()
-    return dict(zip(SUMMARY_COLS, row)) if row else None
+    rec = dict(zip(SUMMARY_COLS, row)) if row else None
+    # 早期版本会把模型返回的空串也存进来；这种记录当没有，让前端显示「生成日报」而不是一块空白
+    return rec if rec and (rec.get("text") or "").strip() else None
 
 
 def save_summary(conn, rec):
