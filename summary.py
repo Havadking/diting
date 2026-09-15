@@ -123,7 +123,7 @@ def _endpoint(base_url):
     return b + "/chat/completions"
 
 
-def chat(profile, system, user, timeout=180, max_tokens=4000):
+def chat(profile, system, user, timeout=300, max_tokens=8000):
     """一次非流式聊天补全。返回 (正文, usage 字典)。出错抛 RuntimeError，信息尽量带上服务端给的原因。"""
     if not (profile.get("api_key") or "").strip():
         raise RuntimeError("这个配置还没填 API Key")
@@ -161,10 +161,17 @@ def chat(profile, system, user, timeout=180, max_tokens=4000):
     if data.get("error"):
         raise RuntimeError(str((data["error"] or {}).get("message") or data["error"])[:200])
     try:
-        text = data["choices"][0]["message"]["content"]
+        choice = data["choices"][0]
+        text = (choice["message"].get("content") or "").strip()
     except Exception:
         raise RuntimeError("接口返回里没有 choices[0].message.content：%s" % body[:120])
-    return (text or "").strip(), data.get("usage") or {}
+    if not text:
+        # 推理模型（deepseek-reasoner / deepseek-flash 这类）的思考过程也算 completion token，
+        # 思考太长会把 max_tokens 吃光，finish_reason=length 且 content 为空——别把空串当结果存起来
+        if choice.get("finish_reason") == "length":
+            raise RuntimeError("模型输出被截断（finish_reason=length）：思考过程把 %d 个输出 token 花完了，正文是空的。换非推理模型或减少当天条目" % max_tokens)
+        raise RuntimeError("模型返回了空内容（finish_reason=%s）" % choice.get("finish_reason"))
+    return text, data.get("usage") or {}
 
 
 def summarize(profile, name, date, items, request=None):

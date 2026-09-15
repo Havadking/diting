@@ -564,7 +564,10 @@
   .sum { max-width: 880px; margin: 0 auto; padding: 16px 28px 80px; }
   .sum-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
   .sum-bar .who { display: flex; gap: 6px; flex-wrap: wrap; }
-  .sum-bar .who .chip { --c: var(--ink-2); --kbg: var(--card); }
+  /* 侧栏收起(.rail)时 .rail .chip 会把类型筛选缩成小圆点，日报页的博主 pill 不能跟着缩 */
+  .sum-bar .who .chip { --c: var(--ink-2); --kbg: var(--card); width: auto; padding: 0 10px; }
+  .sum-bar .who .chip span { display: inline; }
+  .sum-bar .who .chip i { width: 7px; height: 7px; }
   .sum-bar .who .chip.on { --c: var(--uc, var(--accent)); --kbg: color-mix(in srgb, var(--uc, var(--accent)) 14%, var(--card)); }
   .sum-bar .date { display: inline-flex; align-items: center; gap: 4px; }
   .sum-bar .date input { height: 30px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--ink); font-family: var(--mono); font-size: 12.5px; }
