@@ -75,6 +75,7 @@ appmod.MonitorApp.start = lambda self, silent=False: None   # 跳过联网监控
 
 ```
 key, kind, icon, time, title, content, bar, ctx_user, ctx_text, link
+（可选）quote_user, quote_text   # 股吧「回复评论」时被回复的那条评论，来自 myreply 接口的 source_reply_*；其它来源不设
 ```
 
 两个**载荷性约定**，改动时容易踩：
@@ -94,7 +95,7 @@ key, kind, icon, time, title, content, bar, ctx_user, ctx_text, link
 
 ### 消息持久化（SQLite）
 
-`state.json` 只存去重用的 `key` 列表，不存消息内容——真正的消息内容存在 `monitor.py` 的 `messages.db`（`get_db()`/`save_message()`/`load_recent_messages()`），表结构就是 `core.items` 那种已经处理好的展示字段（`content` 已经拼好「评论于/转发自」前缀），不是 `monitor.py` 解析函数的原始字段，所以直接读出来就能塞回列表，不用重新处理。
+`state.json` 只存去重用的 `key` 列表，不存消息内容——真正的消息内容存在 `monitor.py` 的 `messages.db`（`get_db()`/`save_message()`/`load_recent_messages()`），表结构就是 `core.items` 那种已经处理好的展示字段（`content` 已经拼好「评论于/转发自」前缀），不是 `monitor.py` 解析函数的原始字段，所以直接读出来就能塞回列表，不用重新处理。列清单集中在 `MESSAGE_COLS`，所有 SELECT 都用它；加列走 `get_db()` 里的 `PRAGMA table_info` + `ALTER TABLE ADD COLUMN`（`quote_user`/`quote_text` 就是这么加的），老行读出来是 `None` 由 `_rows_to_dicts()` 统一转空串。
 
 连接归属：**后台抓取线程独占写连接**（`_run_loop` 开头 `get_db()`、`finally` 里关，`_add_item()` 用它写）；启动时 `MonitorCore._load_history_from_db()` 用一个独立短连接读完即关；HTTP 线程的「加载更早」翻页（`core.load_older()`）和总数查询（`core.db_count()`）也各自开临时短连接、用完即关。没开 `check_same_thread=False`，所以别跨线程传连接对象。壳层不直接碰 SQLite，读内存里的 `core.items` 要拿 `core.lock`。
 

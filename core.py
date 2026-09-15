@@ -692,6 +692,9 @@ class MonitorCore:
                 "icon": it.get("icon") or "",
                 "time": it["time"] or "", "bar": it["bar"] or "—",
                 "content": content, "link": it["link"],
+                # 股吧「回复评论」时被回复的那条评论，卡片展开后显示；其它来源为空串
+                "quote_user": (it.get("quote_user") or "").strip(),
+                "quote_text": " ".join((it.get("quote_text") or "").split()),
             }
             self.items.append(entry)
             if len(self.items) > MAX_ROWS:

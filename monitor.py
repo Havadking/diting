@@ -86,6 +86,12 @@ def save_state(state):
 # ---------- 消息持久化(SQLite) ----------
 # 只存 app.py 渲染用的「成品」字段(标题/来源等已经拼进 content 里了)，方便原样取出来重新显示。
 # 只在主线程用(app.py 只从 _add_item 里写、从启动流程里读)，故意不开 check_same_thread=False。
+# 读出来直接塞进列表的展示字段。quote_user/quote_text 是「被回复的那条评论」（只有股吧"回复评论"才有），后加的列，
+# 老库靠 get_db() 里的 ALTER TABLE 补上，读出来是 None 时统一转成空串。
+MESSAGE_COLS = ["key", "name", "kind", "icon", "time", "bar", "content", "link", "quote_user", "quote_text"]
+_SELECT_COLS = ", ".join(MESSAGE_COLS)
+
+
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.execute("""CREATE TABLE IF NOT EXISTS messages (
@@ -100,17 +106,26 @@ def get_db():
         saved_at TEXT NOT NULL
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_time ON messages(time)")
+    have = {row[1] for row in conn.execute("PRAGMA table_info(messages)")}
+    for col in ("quote_user", "quote_text"):
+        if col not in have:
+            conn.execute("ALTER TABLE messages ADD COLUMN %s TEXT" % col)
     conn.commit()
     return conn
+
+
+def _rows_to_dicts(cur):
+    return [{k: (v if v is not None else "") for k, v in zip(MESSAGE_COLS, r)} for r in cur.fetchall()]
 
 
 def save_message(conn, entry):
     """entry 是 app.py self.items 里那种已经处理好的 dict(key/name/kind/icon/time/bar/content/link)。"""
     conn.execute(
-        "INSERT OR IGNORE INTO messages (key, name, kind, icon, time, bar, content, link, saved_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO messages (key, name, kind, icon, time, bar, content, link, quote_user, quote_text, saved_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (entry["key"], entry["name"], entry["kind"], entry.get("icon", ""), entry["time"],
          entry.get("bar", ""), entry.get("content", ""), entry.get("link", ""),
+         entry.get("quote_user", ""), entry.get("quote_text", ""),
          datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
     conn.commit()
 
@@ -118,10 +133,8 @@ def save_message(conn, entry):
 def load_recent_messages(conn, limit=1000):
     """按时间取最近 limit 条，返回时按时间升序(旧的在前)，方便直接塞进列表。"""
     cur = conn.execute(
-        "SELECT key, name, kind, icon, time, bar, content, link FROM messages "
-        "ORDER BY time DESC LIMIT ?", (limit,))
-    cols = ["key", "name", "kind", "icon", "time", "bar", "content", "link"]
-    rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+        "SELECT " + _SELECT_COLS + " FROM messages ORDER BY time DESC LIMIT ?", (limit,))
+    rows = _rows_to_dicts(cur)
     rows.reverse()
     return rows
 
@@ -130,11 +143,10 @@ def load_messages_before(conn, before_time, before_key, limit=200):
     """「加载更早」翻页：取严格早于游标 (before_time, before_key) 的 limit 条，返回按时间升序。
     游标用 (time, key) 二元组而不只是 time，避免同一秒有多条时漏掉或重复。"""
     cur = conn.execute(
-        "SELECT key, name, kind, icon, time, bar, content, link FROM messages "
+        "SELECT " + _SELECT_COLS + " FROM messages "
         "WHERE time < ? OR (time = ? AND key < ?) "
         "ORDER BY time DESC, key DESC LIMIT ?", (before_time, before_time, before_key, limit))
-    cols = ["key", "name", "kind", "icon", "time", "bar", "content", "link"]
-    rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+    rows = _rows_to_dicts(cur)
     rows.reverse()
     return rows
 
@@ -150,11 +162,10 @@ def search_messages(conn, keyword, limit=100):
         return []
     pat = "%" + kw + "%"
     cur = conn.execute(
-        "SELECT key, name, kind, icon, time, bar, content, link FROM messages "
-        "WHERE content LIKE ? OR bar LIKE ? OR name LIKE ? "
-        "ORDER BY time DESC, key DESC LIMIT ?", (pat, pat, pat, limit))
-    cols = ["key", "name", "kind", "icon", "time", "bar", "content", "link"]
-    rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+        "SELECT " + _SELECT_COLS + " FROM messages "
+        "WHERE content LIKE ? OR bar LIKE ? OR name LIKE ? OR quote_text LIKE ? "
+        "ORDER BY time DESC, key DESC LIMIT ?", (pat, pat, pat, pat, limit))
+    rows = _rows_to_dicts(cur)
     rows.reverse()
     return rows
 
@@ -227,8 +238,10 @@ def parse_replies(uid):
         guba = r.get("reply_guba") or {}
         code = guba.get("stockbar_code") or ""
         src_post = str(r.get("source_post_id") or "")
-        # 评论可能是回复别人的评论
+        # 评论可能是回复别人的评论：此时 source_reply_* 是被回复的那条评论（列表接口直接给，不用再请求详情页），
+        # source_post_* 仍是所在的帖子。直接评论帖子时 source_reply_id 为 0、source_reply_text 为空。
         to_user = r.get("source_reply_user_nickname") or r.get("source_post_user_nickname") or ""
+        quote_text = (r.get("source_reply_text") or "").strip() if r.get("source_reply_id") else ""
         items.append({
             "key": "R" + rid,
             "kind": "评论",
@@ -240,6 +253,8 @@ def parse_replies(uid):
             "ctx_user": to_user,
             "ctx_text": (r.get("source_post_title") or "").strip(),
             "link": make_link(code, src_post),
+            "quote_user": (r.get("source_reply_user_nickname") or "").strip() if quote_text else "",
+            "quote_text": quote_text,
         })
     return items
 
@@ -546,6 +561,8 @@ def build_message(user_name, it):
     ]
     if it["kind"] == "评论" and (it["ctx_user"] or it["ctx_text"]):
         lines.append("评论于：%s 的帖子《%s》" % (it["ctx_user"] or "?", it["ctx_text"] or ""))
+    if it.get("quote_text"):
+        lines.append("回复 %s 的评论：%s" % (it.get("quote_user") or "?", it["quote_text"]))
     if it["kind"] == "转发" and (it["ctx_user"] or it["ctx_text"]):
         lines.append("转发自：%s 《%s》" % (it["ctx_user"] or "?", it["ctx_text"] or ""))
     if it["kind"] == "转推" and it["ctx_user"]:

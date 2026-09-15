@@ -329,7 +329,8 @@
     const { ctx, body } = useMemo(() => splitCtx(it), [it]);
     const cls = ["card", open && "open", isNew && "new", it.kind === "追加" && "append"].filter(Boolean).join(" ");
     const style = color ? { "--uc": color } : undefined;
-    const titleTip = !open ? `${it.name} [${it.kind}] ${it.bar && it.bar !== "—" ? "· " + it.bar : ""}: ${it.content || ""}` : undefined;
+    const titleTip = !open ? `${it.name} [${it.kind}] ${it.bar && it.bar !== "—" ? "· " + it.bar : ""}: ${it.content || ""}`
+                              + (it.quote_text ? `\n↳ 回复 ${it.quote_user || "股友"}：${it.quote_text}` : "") : undefined;
 
     const barCode = useMemo(() => {
       if (it.link) {
@@ -356,7 +357,11 @@
               </a>` : html`<span class="bar">${highlight(it.bar, kw)}</span>`)}
             <time class="t" dateTime=${it.time}>${it.time.slice(11, 16)}</time>
           </div>
-          ${ctx && html`<div class="ctx">${ctx.label}${ctx.title && html`<b>《${renderRichContent(ctx.title, kw, stockDict, stockRegex)}》</b>`}</div>`}
+          ${ctx && html`<div class="ctx">${ctx.label}${ctx.title && html`<b>《${renderRichContent(ctx.title, kw, stockDict, stockRegex)}》</b>`}${it.quote_text && html`<span class="ctx-more">· 回复 ${it.quote_user || "股友"}</span>`}</div>`}
+          ${open && it.quote_text && html`
+            <blockquote class="quote" title="被回复的评论">
+              <span class="qwho">${it.quote_user || "股友"}：</span>${renderRichContent(it.quote_text, kw, stockDict, stockRegex)}
+            </blockquote>`}
           <div class="txt">${renderRichContent(body, kw, stockDict, stockRegex)}</div>
           ${open && html`
             <div class="foot">

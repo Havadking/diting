@@ -19,7 +19,7 @@ USERS = [
     {"uid": "8830011290000000", "name": "量化小张"},
 ]
 
-# (天数偏移, 时间, 用户名, 类型, 股吧, 展示用 content —— 已按 core._add_item 的规则拼好前缀)
+# (天数偏移, 时间, 用户名, 类型, 股吧, 展示用 content —— 已按 core._add_item 的规则拼好前缀[, (被回复的评论作者, 评论内容)])
 # 天数偏移为 0 时"时间"是负的分钟数（距现在多久之前），这样今天的示例永远排在定时随机推送之前
 _RAW = [
     (0, -6, "股海老船长", "发帖", "中际旭创",
@@ -28,7 +28,8 @@ _RAW = [
     (0, -25, "股海老船长", "追加", "中际旭创",
      "作者更新：补充一下，仓位控制在 5 成以内，别梭哈。今天尾盘量能不太够，明天看能不能站稳 5 日线。"),
     (0, -39, "半仓过节", "评论", "宁德时代",
-     "[评论《宁德三季度出货量超预期，储能业》] 储能确实是亮点，但动力电池那块的毛利还在往下走，别只看营收。"),
+     "[评论《宁德三季度出货量超预期，储能业》] 储能确实是亮点，但动力电池那块的毛利还在往下走，别只看营收。",
+     ("股友511E316c18", "储能这块的增速能持续吗？看到有券商说明年会放缓")),
     (0, -197, "茅台信徒", "发帖", "贵州茅台",
      "1500 以下每跌 50 加一档，这个策略我执行第三年了，年化比大部分基金经理强。批发价企稳了，中秋动销比去年好，慌什么。"),
     (0, -275, "半仓过节", "转发", "沪深300",
@@ -62,7 +63,7 @@ _NEW_POOL = [
 _BARS = ["中际旭创", "宁德时代", "贵州茅台", "长江电力", "中证1000", "北证50", "沪深300", "上证指数"]
 
 
-def _entry(day_off, hms, name, kind, bar, content, key=None):
+def _entry(day_off, hms, name, kind, bar, content, quote=None, key=None):
     if isinstance(hms, int):
         t = (datetime.now() + timedelta(minutes=hms)).strftime("%Y-%m-%d %H:%M:%S")
     else:
@@ -74,6 +75,7 @@ def _entry(day_off, hms, name, kind, bar, content, key=None):
         "key": key or ("M%s_%s" % (kind[0], t.replace("-", "").replace(":", "").replace(" ", ""))),
         "name": name, "kind": kind, "icon": _ICON[kind], "time": t, "bar": bar,
         "content": content, "link": link,
+        "quote_user": quote[0] if quote else "", "quote_text": quote[1] if quote else "",
     }
 
 
