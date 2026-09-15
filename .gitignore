@@ -19,6 +19,7 @@
 !/test_once.py
 !/run.bat
 !/run_gui.bat
+!/run_gui_lan.bat
 !/run_gui_tk.bat
 !/config.example.json
 !/docs/

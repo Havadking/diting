@@ -16,6 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 python server.py                 # 网页版（主入口，等价于双击 run_gui.bat）；自动开浏览器
 python server.py --mock          # 离线演示：不读 config.json、不联网，示例数据 + 每 10 秒随机推一条
 python server.py --no-browser    # 不自动开浏览器；--port N 指定端口（默认 17777，被占自动 +1）
+python server.py --host 0.0.0.0  # 开放局域网访问（平板/手机当小副屏用，等价于双击 run_gui_lan.bat）；默认只绑 127.0.0.1
 python app.py                    # 旧版 tkinter 窗口（等价于双击 run_gui_tk.bat）
 python monitor.py                # 命令行 + 微信推送版（等价于双击 run.bat）
 python test_once.py              # 抓取自检：打印 config.json 里第一个股吧用户的最新 8 条
@@ -62,7 +63,7 @@ appmod.MonitorApp.start = lambda self, silent=False: None   # 跳过联网监控
 ### 一个核心、三个入口，能力不对等
 
 - **`core.py`** — `MonitorCore`：后台轮询线程、首轮基线/去重、追加监视、静音/合并/toast、写 `messages.db`、事件广播、读写用户设置。**无 UI 依赖，不许 import tkinter**。三个数据源全支持。
-- **`server.py` + `web/`** — 网页版，主要维护对象。`server.py` 是纯标准库 `ThreadingHTTPServer`，只绑 `127.0.0.1`，接口见 `docs/web-design.md` §5；`web/app.js` 是 React 18 + htm 写的单文件前端（htm 是标签模板函数，写法 `` html`<div class=${x}>` ``，不需要 JSX 编译）。所有 `POST` 校验 `Origin` 必须等于自己，别去掉——这是防止别的网页 fetch 本地端口让程序退出的唯一防线。
+- **`server.py` + `web/`** — 网页版，主要维护对象。`server.py` 是纯标准库 `ThreadingHTTPServer`，默认只绑 `127.0.0.1`（`--host 0.0.0.0` 开放局域网给平板/手机看），接口见 `docs/web-design.md` §5；`web/app.js` 是 React 18 + htm 写的单文件前端（htm 是标签模板函数，写法 `` html`<div class=${x}>` ``，不需要 JSX 编译）。所有 `POST` 校验 `Origin` 必须等于自己（拿 `Host` 头比，不是写死 127.0.0.1，所以局域网地址访问也能过），别去掉——这是防止别的网页 fetch 本地端口让程序退出的唯一防线。
 - **`app.py`** — 旧版 tkinter 窗口，只是 `MonitorCore` 的另一层壳：`subscribe()` 一个队列，消费事件画 Treeview。稳定后会删，**不要再往里加功能**。
 - **`monitor.py`** — 双重身份：① 被 `core.py` import 的抓取/解析核心；② 独立的命令行推送版（`main()`）。注意 **`monitor.py` 的命令行 `main()` 只处理股吧用户**，推特/微博是 GUI 独有的。改抓取逻辑时两边都受影响，改轮询逻辑时通常只动 `core.py`。
 

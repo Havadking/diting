@@ -6,8 +6,9 @@
     python server.py --mock          # 离线演示：不读配置不联网，用示例数据 + 定时随机推送
     python server.py --no-browser    # 不自动开浏览器（调试用）
     python server.py --port 18000    # 指定端口（默认 17777，被占自动 +1）
+    python server.py --host 0.0.0.0  # 同时允许局域网设备（平板/手机/小屏）访问，默认只绑 127.0.0.1
 
-纯标准库。只绑 127.0.0.1。接口见 docs/web-design.md §5。
+纯标准库。默认只绑 127.0.0.1。接口见 docs/web-design.md §5。
 """
 import argparse
 import json
@@ -279,15 +280,29 @@ class Server(ThreadingHTTPServer):
     allow_reuse_address = False
 
 
-def bind_server(port, tries=20):
+def bind_server(port, tries=20, host="127.0.0.1"):
     """从 port 开始逐个试，被占就 +1。"""
     last = None
     for p in range(port, port + tries):
         try:
-            return Server(("127.0.0.1", p), Handler), p
+            return Server((host, p), Handler), p
         except OSError as e:
             last = e
     raise SystemExit("端口 %d~%d 全被占用：%s" % (port, port + tries - 1, last))
+
+
+def lan_ips():
+    """列出本机的局域网 IPv4（10/8、172.16/12、192.168/16）。
+    不用"UDP connect 看出口地址"那招：开着 Clash/TUN 类代理时默认路由是虚拟网卡（198.18.x.x），
+    平板根本连不上那个地址；直接枚举网卡再按私网段过滤更靠谱。"""
+    try:
+        addrs = {a[4][0] for a in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)}
+    except OSError:
+        return []
+    def is_lan(ip):
+        parts = [int(x) for x in ip.split(".")]
+        return parts[0] == 10 or parts[:2] == [192, 168] or (parts[0] == 172 and 16 <= parts[1] <= 31)
+    return sorted(ip for ip in addrs if is_lan(ip))
 
 
 def main():
@@ -295,6 +310,8 @@ def main():
     ap.add_argument("--mock", action="store_true", help="离线演示：示例数据 + 定时随机推送，不读配置不联网")
     ap.add_argument("--no-browser", action="store_true", help="不自动打开浏览器")
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
+    ap.add_argument("--host", default="127.0.0.1",
+                    help="监听地址。默认 127.0.0.1 只本机可见；0.0.0.0 允许局域网内的平板/手机访问")
     ap.add_argument("--mock-interval", type=int, default=10, help="--mock 模式下推送间隔（秒）")
     args = ap.parse_args()
 
@@ -306,7 +323,7 @@ def main():
         core = core_mod.MonitorCore()
     Handler.core = core
 
-    httpd, port = bind_server(args.port)
+    httpd, port = bind_server(args.port, host=args.host)
     url = "http://127.0.0.1:%d" % port
 
     err = core.start()
@@ -315,6 +332,13 @@ def main():
         print("监控未启动：%s" % err.replace("\n", " "), file=sys.stderr)
 
     print("谛听 网页版已启动：%s%s" % (url, "（--mock 演示模式）" if args.mock else ""))
+    if args.host != "127.0.0.1":
+        # 暴露到局域网时把可用的地址打出来，省得用户自己去 ipconfig 找。
+        # POST 的 Origin 校验是拿 Host 头比的，局域网地址访问时同样能过。
+        ips = lan_ips() if args.host in ("0.0.0.0", "") else [args.host]
+        urls = "、".join("http://%s:%d" % (ip, port) for ip in ips) or "（没找到局域网 IP，请用 ipconfig 查看）"
+        print("已开放局域网访问，平板/手机打开：%s" % urls, flush=True)
+        print("提示：Windows 首次会弹防火墙对话框，需勾选允许；当前网络类型为“公用”时可能被拦，改成“专用”即可。", flush=True)
     if not args.no_browser:
         threading.Timer(0.3, webbrowser.open, [url]).start()
     try:

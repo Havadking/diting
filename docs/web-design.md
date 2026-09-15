@@ -19,7 +19,7 @@ python server.py
   │     ├─ _run_loop / _emit / 追加监视 / toast     原样搬
   │     ├─ self.items (list) + threading.Lock        主数据
   │     └─ subscribers: [queue.Queue]                事件广播给 SSE 连接
-  ├─ http.server.ThreadingHTTPServer  绑 127.0.0.1:17777（被占则 +1 顺延）
+  ├─ http.server.ThreadingHTTPServer  绑 127.0.0.1:17777（被占则 +1 顺延；--host 0.0.0.0 开放局域网）
   │     ├─ GET  /  /assets/*        静态文件（web/ 目录）
   │     ├─ GET  /api/*              JSON
   │     ├─ GET  /api/events         SSE 长连接
@@ -110,7 +110,7 @@ class MonitorCore:
 
 ## 5. HTTP 接口（`server.py`）
 
-只绑 `127.0.0.1`。所有 `POST` 校验 `Origin` 头必须等于自己（`http://127.0.0.1:<port>`），否则 403——防止其它网页用 `fetch` 打本地端口。
+默认只绑 `127.0.0.1`；`--host 0.0.0.0`（`run_gui_lan.bat`）开放局域网，让平板/手机当小副屏，启动时会打印私网段的访问地址（`lan_ips()`，故意不用 UDP connect 猜出口地址——开着 TUN 代理时那会猜到 198.18.x.x）。所有 `POST` 校验 `Origin` 头必须等于自己（`http://<Host 头>`，所以局域网地址访问也能过），否则 403——防止其它网页用 `fetch` 打本地端口。
 
 | 方法 | 路径 | 请求 | 响应 |
 |---|---|---|---|
@@ -266,7 +266,7 @@ App
 
 **目标**：不写一行前端，纯用 `curl` 就能验证后端。
 
-- `ThreadingHTTPServer` + `BaseHTTPRequestHandler`，绑 `127.0.0.1`，端口 17777 被占自动 +1（`OSError` 重试，最多 20 次）
+- `ThreadingHTTPServer` + `BaseHTTPRequestHandler`，默认绑 `127.0.0.1`（`--host` 可改），端口 17777 被占自动 +1（`OSError` 重试，最多 20 次）
 - `GET /` 和 `GET /assets/<path>`：从 `web/` 读文件，`os.path.realpath` 校验不能逃出 `web/`；MIME 表手写几项（html/css/js/woff2/svg/png）即可
 - `GET /api/snapshot`：按 §5 的结构返回，`items` 加 `lock` 读内存
 - `GET /api/events`：SSE。`subscribe()` 拿队列，循环 `q.get(timeout=25)`，超时发 `: ping\n\n`，客户端断开（`BrokenPipeError` / `ConnectionResetError`）时 `unsubscribe()`。连上先发一条 `status`
@@ -325,7 +325,7 @@ App
 
 - `POST /api/control`：`start` / `stop` / `clear` / `test_toast` / `quit`。`quit` 回 `{"ok":true}` 后 `threading.Timer(0.5, os._exit, [0])`
 - `POST /api/users`：只更新请求里出现的用户；写 `config.json` 前先读现有内容合并，**不动没出现的用户和其它顶层键**（`weibo_cookie` 等）；成功后 `_broadcast("config", ...)`
-- `Origin` 校验：所有 `POST` 没有 `Origin` 或不等于 `http://127.0.0.1:<port>` 一律 403
+- `Origin` 校验：所有 `POST` 没有 `Origin` 或不等于 `http://<Host 头>` 一律 403
 - 前端 `SettingsDrawer`：每用户一行，8 色色板 + 默认、静音开关、查追加开关；保存后 `Toast` 提示
 - 顶栏按钮接上：开始/停止、清空、测试通知、退出（退出弹 `confirm`）
 
