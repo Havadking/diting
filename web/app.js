@@ -591,6 +591,7 @@
 
 
   /* ---------- AI 日报 ---------- */
+  const fmtElapsed = s => s < 60 ? s + "s" : Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
   const shiftDate = (d, n) => {
     const t = new Date(d + "T00:00:00"); t.setDate(t.getDate() + n);
     const p = x => String(x).padStart(2, "0");
@@ -706,8 +707,16 @@
     const [count, setCount] = useState(null);     // 当天当前有效条数
     const [done, setDone] = useState(() => new Set());   // 当天已经生成过日报的博主
     const [busy, setBusy] = useState(false);
+    const [elapsed, setElapsed] = useState(0);    // 生成中已等待秒数：思考模式下跑几分钟很正常，得让人看出没卡死
     const [err, setErr] = useState("");
     const seq = useRef(0);
+
+    useEffect(() => {
+      if (!busy) { setElapsed(0); return; }
+      const t0 = Date.now();
+      const id = setInterval(() => setElapsed(Math.floor((Date.now() - t0) / 1000)), 1000);
+      return () => clearInterval(id);
+    }, [busy]);
 
     useEffect(() => { if (!who && users[0]) setWho(users[0].name); }, [users]);
 
@@ -755,7 +764,7 @@
             <button class="btn quiet" title="后一天" disabled=${date >= today()} onClick=${() => setDate(d => shiftDate(d, 1))}>${I.right}</button>
           </div>
           <button class="btn primary" disabled=${busy || !who || count === 0} onClick=${() => gen(!!rec)}>
-            ${I.spark}<span class="lbl">${busy ? "生成中…" : rec ? "重新生成" : "生成日报"}</span>
+            ${I.spark}<span class="lbl">${busy ? "生成中 " + fmtElapsed(elapsed) : rec ? "重新生成" : "生成日报"}</span>
           </button>
           <button class="btn quiet" title="AI 接口与提示词设置" onClick=${onOpenAi}>${I.gear}</button>
         </div>

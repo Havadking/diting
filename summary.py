@@ -136,42 +136,20 @@ def _endpoint(base_url):
     return b + "/chat/completions"
 
 
-# 日报默认给的输出上限。推理模型（deepseek-reasoner 这类）的思考过程也计入 completion token，
-# 八九十条动态的思考轻松就是上万 token，8000 会被吃光、正文为空；所以按推理模型的量级给。
-# 不支持这么大的模型（deepseek-chat 上限 8192）会回 HTTP 400 报有效区间，chat() 会解析出上限重试一次。
-SUMMARY_MAX_TOKENS = 32000
-
-MAX_TOKENS_RANGE_RE = re.compile(r"max_tokens.*?\[\s*\d+\s*,\s*(\d+)\s*\]", re.S)
-
-
-def chat(profile, system, user, timeout=300, max_tokens=SUMMARY_MAX_TOKENS):
+def chat(profile, system, user, timeout=900):
     """一次非流式聊天补全。返回 (正文, usage 字典)。出错抛 RuntimeError，信息尽量带上服务端给的原因。
 
-    max_tokens 超过模型上限被 400 拒绝时，从错误信息里解析出上限再试一次。"""
+    故意不传 max_tokens：让服务端按模式给默认上限（DeepSeek：非思考 8K、思考 64K、effort=max 128K），
+    我们自己定一个数只会在思考模式下把额度掐死。非流式响应要等整段生成完才有第一个字节，
+    思考模式下几十条动态跑几分钟很正常，所以超时给足。"""
     if not (profile.get("api_key") or "").strip():
         raise RuntimeError("这个配置还没填 API Key")
     if not (profile.get("model") or "").strip():
         raise RuntimeError("这个配置还没填模型名")
-    try:
-        return _chat_once(profile, system, user, timeout, max_tokens)
-    except _MaxTokensTooLarge as e:
-        if e.limit >= max_tokens:
-            raise RuntimeError(e.detail)
-        return _chat_once(profile, system, user, timeout, e.limit)
-
-
-class _MaxTokensTooLarge(Exception):
-    def __init__(self, limit, detail):
-        super().__init__(detail)
-        self.limit, self.detail = limit, detail
-
-
-def _chat_once(profile, system, user, timeout, max_tokens):
     payload = {
         "model": profile["model"].strip(),
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         "temperature": 0.3,
-        "max_tokens": max_tokens,
         "stream": False,
     }
     payload.update(THINKING_MODES.get(profile.get("thinking") or "", {}))
@@ -190,11 +168,7 @@ def _chat_once(profile, system, user, timeout, max_tokens):
             detail = (json.loads(raw).get("error") or {}).get("message") or raw
         except Exception:
             detail = raw
-        detail = "HTTP %d：%s" % (e.code, str(detail or e.reason)[:200])
-        m = e.code == 400 and MAX_TOKENS_RANGE_RE.search(str(detail))
-        if m:
-            raise _MaxTokensTooLarge(int(m.group(1)), detail)
-        raise RuntimeError(detail)
+        raise RuntimeError("HTTP %d：%s" % (e.code, str(detail or e.reason)[:200]))
     except urllib.error.URLError as e:
         raise RuntimeError("连不上接口：%s" % e.reason)
     try:
@@ -209,10 +183,10 @@ def _chat_once(profile, system, user, timeout, max_tokens):
     except Exception:
         raise RuntimeError("接口返回里没有 choices[0].message.content：%s" % body[:120])
     if not text:
-        # 推理模型（deepseek-reasoner / deepseek-flash 这类）的思考过程也算 completion token，
-        # 思考太长会把 max_tokens 吃光，finish_reason=length 且 content 为空——别把空串当结果存起来
+        # 思考模式下思考过程也算 completion token，极端情况会把服务端的输出上限吃光，
+        # finish_reason=length 且 content 为空——别把空串当结果存起来
         if choice.get("finish_reason") == "length":
-            raise RuntimeError("模型输出被截断（finish_reason=length）：思考过程把 %d 个输出 token 花完了，正文是空的。换非推理模型或减少当天条目" % max_tokens)
+            raise RuntimeError("模型输出被截断（finish_reason=length）：思考过程把输出上限花完了，正文是空的。把思考模式调低或关掉再试")
         raise RuntimeError("模型返回了空内容（finish_reason=%s）" % choice.get("finish_reason"))
     return text, data.get("usage") or {}
 
@@ -231,5 +205,5 @@ def summarize(profile, name, date, items, request=None):
 
 def ping(profile):
     """设置页「测试连接」：发个极短的请求，回来就算通。"""
-    text, _ = chat(profile, "你是测试助手。", "只回复两个字：连通", timeout=60, max_tokens=20)
+    text, _ = chat(profile, "你是测试助手。", "只回复两个字：连通", timeout=120)
     return text
