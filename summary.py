@@ -123,12 +123,37 @@ def _endpoint(base_url):
     return b + "/chat/completions"
 
 
-def chat(profile, system, user, timeout=300, max_tokens=8000):
-    """一次非流式聊天补全。返回 (正文, usage 字典)。出错抛 RuntimeError，信息尽量带上服务端给的原因。"""
+# 日报默认给的输出上限。推理模型（deepseek-reasoner 这类）的思考过程也计入 completion token，
+# 八九十条动态的思考轻松就是上万 token，8000 会被吃光、正文为空；所以按推理模型的量级给。
+# 不支持这么大的模型（deepseek-chat 上限 8192）会回 HTTP 400 报有效区间，chat() 会解析出上限重试一次。
+SUMMARY_MAX_TOKENS = 32000
+
+MAX_TOKENS_RANGE_RE = re.compile(r"max_tokens.*?\[\s*\d+\s*,\s*(\d+)\s*\]", re.S)
+
+
+def chat(profile, system, user, timeout=300, max_tokens=SUMMARY_MAX_TOKENS):
+    """一次非流式聊天补全。返回 (正文, usage 字典)。出错抛 RuntimeError，信息尽量带上服务端给的原因。
+
+    max_tokens 超过模型上限被 400 拒绝时，从错误信息里解析出上限再试一次。"""
     if not (profile.get("api_key") or "").strip():
         raise RuntimeError("这个配置还没填 API Key")
     if not (profile.get("model") or "").strip():
         raise RuntimeError("这个配置还没填模型名")
+    try:
+        return _chat_once(profile, system, user, timeout, max_tokens)
+    except _MaxTokensTooLarge as e:
+        if e.limit >= max_tokens:
+            raise RuntimeError(e.detail)
+        return _chat_once(profile, system, user, timeout, e.limit)
+
+
+class _MaxTokensTooLarge(Exception):
+    def __init__(self, limit, detail):
+        super().__init__(detail)
+        self.limit, self.detail = limit, detail
+
+
+def _chat_once(profile, system, user, timeout, max_tokens):
     payload = {
         "model": profile["model"].strip(),
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
@@ -151,7 +176,11 @@ def chat(profile, system, user, timeout=300, max_tokens=8000):
             detail = (json.loads(raw).get("error") or {}).get("message") or raw
         except Exception:
             detail = raw
-        raise RuntimeError("HTTP %d：%s" % (e.code, str(detail or e.reason)[:200]))
+        detail = "HTTP %d：%s" % (e.code, str(detail or e.reason)[:200])
+        m = e.code == 400 and MAX_TOKENS_RANGE_RE.search(str(detail))
+        if m:
+            raise _MaxTokensTooLarge(int(m.group(1)), detail)
+        raise RuntimeError(detail)
     except urllib.error.URLError as e:
         raise RuntimeError("连不上接口：%s" % e.reason)
     try:
