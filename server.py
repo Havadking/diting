@@ -225,7 +225,8 @@ class Handler(BaseHTTPRequestHandler):
         """返回给前端的配置里 api_key 只给脱敏后的 key_hint，明文永远不出后端。"""
         ai = self.core.get_ai_config()
         profiles = [{"id": p.get("id", ""), "name": p.get("name", ""), "base_url": p.get("base_url", ""),
-                     "model": p.get("model", ""), "key_hint": self._mask_key(p.get("api_key")),
+                     "model": p.get("model", ""), "thinking": p.get("thinking", ""),
+                     "key_hint": self._mask_key(p.get("api_key")),
                      "has_key": bool(p.get("api_key"))} for p in ai["profiles"]]
         self._send_json({"ok": True, "active": ai["active"], "profiles": profiles, "prompt": ai["prompt"],
                          "default_prompt": summary_mod.DEFAULT_REQUEST})
@@ -241,9 +242,12 @@ class Handler(BaseHTTPRequestHandler):
             key = p.get("api_key")
             if key is None or key == "":
                 key = (old.get(pid) or {}).get("api_key", "")
+            thinking = str(p.get("thinking") or "").strip()
+            if thinking not in summary_mod.THINKING_MODES:
+                return None, "thinking 取值不对"
             out.append({"id": pid, "name": str(p.get("name") or "").strip() or "未命名",
                         "base_url": str(p.get("base_url") or "").strip(),
-                        "model": str(p.get("model") or "").strip(), "api_key": str(key).strip()})
+                        "model": str(p.get("model") or "").strip(), "thinking": thinking, "api_key": str(key).strip()})
         return out, None
 
     def _api_ai_settings_post(self, body):

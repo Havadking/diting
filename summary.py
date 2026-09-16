@@ -8,11 +8,15 @@ AI 日报：把某位博主某一天的全部动态整理成提示词，交给 O
     "ai": {
       "active": "<profile id>",
       "profiles": [{"id": "...", "name": "DeepSeek", "base_url": "https://api.deepseek.com",
-                    "api_key": "sk-...", "model": "deepseek-chat"}],
+                    "api_key": "sk-...", "model": "deepseek-flash", "thinking": "low"}],
       "prompt": ""        # 覆盖默认的「总结要求」，空串就用 DEFAULT_REQUEST
     }
 
 只做 OpenAI 兼容格式（DeepSeek / 千问 / Kimi / OpenAI 都是这一套）：POST {base_url}/chat/completions。
+
+thinking 是 DeepSeek 的思考模式开关（见 THINKING_MODES）：""/缺省 = 请求里不带，模型按自己的默认来
+（deepseek-flash 默认思考且 effort=high）；"off" 关；"low"/"high"/"max" 开并指定强度。
+只有 DeepSeek 认 `thinking` / `reasoning_effort` 这两个参数，别的厂商可能 400，所以默认不带。
 """
 import json
 import re
@@ -39,6 +43,15 @@ DEFAULT_REQUEST = """请按下面的结构输出：
 4. **回答粉丝的个股判断**：粉丝问的股票 → 博主的结论（一句话），只列有明确结论的
 5. **明日计划 / 关注点**：博主明确说的，没有就写「未提及」
 6. **其它**：一句话带过与操作无关的内容（争吵、闲聊等）"""
+
+# 思考模式取值 → 请求体里附加的字段。DeepSeek 文档：思考模式下 temperature 等参数不报错但被忽略。
+THINKING_MODES = {
+    "": {},
+    "off": {"thinking": {"type": "disabled"}},
+    "low": {"thinking": {"type": "enabled"}, "reasoning_effort": "low"},
+    "high": {"thinking": {"type": "enabled"}, "reasoning_effort": "high"},
+    "max": {"thinking": {"type": "enabled"}, "reasoning_effort": "max"},
+}
 
 STOCK_TAG_RE = re.compile(r"\$([^$()]{1,20})\((?:SH|SZ|BJ|HK|US)?(\w+)\)\$")
 CTX_RE = re.compile(r"^\[(评论|转发自|转推自)\s*(.*?)\]\s*", re.S)
@@ -161,6 +174,7 @@ def _chat_once(profile, system, user, timeout, max_tokens):
         "max_tokens": max_tokens,
         "stream": False,
     }
+    payload.update(THINKING_MODES.get(profile.get("thinking") or "", {}))
     req = urllib.request.Request(_endpoint(profile.get("base_url")), data=json.dumps(payload).encode("utf-8"), headers={
         "Content-Type": "application/json",
         "Authorization": "Bearer " + profile["api_key"].strip(),

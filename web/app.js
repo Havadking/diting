@@ -620,7 +620,7 @@
     const upd = (i, patch) => setCfg(c => ({ ...c, profiles: c.profiles.map((p, j) => j === i ? { ...p, ...patch } : p) }));
     const add = () => setCfg(c => {
       const id = "p" + Date.now().toString(36);
-      return { ...c, active: c.active || id, profiles: [...c.profiles, { id, name: "DeepSeek", base_url: "https://api.deepseek.com", model: "deepseek-chat", api_key: "", key_hint: "", has_key: false }] };
+      return { ...c, active: c.active || id, profiles: [...c.profiles, { id, name: "DeepSeek", base_url: "https://api.deepseek.com", model: "deepseek-flash", thinking: "low", api_key: "", key_hint: "", has_key: false }] };
     });
     const del = i => setCfg(c => {
       const profiles = c.profiles.filter((_, j) => j !== i);
@@ -638,7 +638,7 @@
     const save = async () => {
       setSaving(true);
       try {
-        await post("/api/ai/settings", { active: cfg.active, prompt: cfg.prompt, profiles: cfg.profiles.map(p => ({ id: p.id, name: p.name, base_url: p.base_url, model: p.model, api_key: p.api_key || undefined })) });
+        await post("/api/ai/settings", { active: cfg.active, prompt: cfg.prompt, profiles: cfg.profiles.map(p => ({ id: p.id, name: p.name, base_url: p.base_url, model: p.model, thinking: p.thinking || "", api_key: p.api_key || undefined })) });
         toast("AI 设置已保存");
         onSaved && onSaved();
         onClose();
@@ -667,7 +667,17 @@
                 ${p.has_key && !p.api_key && html`<span class="hint">Key ${p.key_hint}</span>`}
               </div>
               <div class="row"><label>接口地址</label><input class="input-text mono" placeholder="https://api.deepseek.com" value=${p.base_url} onInput=${e => upd(i, { base_url: e.target.value })}/></div>
-              <div class="row"><label>模型</label><input class="input-text mono" placeholder="deepseek-chat" value=${p.model} onInput=${e => upd(i, { model: e.target.value })}/></div>
+              <div class="row"><label>模型</label><input class="input-text mono" placeholder="deepseek-flash" value=${p.model} onInput=${e => upd(i, { model: e.target.value })}/></div>
+              <div class="row"><label>思考模式</label>
+                <select class="input-text" value=${p.thinking || ""} onChange=${e => upd(i, { thinking: e.target.value })}>
+                  <option value="">模型默认（DeepSeek 为开·高）</option>
+                  <option value="off">关闭</option>
+                  <option value="low">开·低（推荐，整理归纳够用）</option>
+                  <option value="high">开·高</option>
+                  <option value="max">开·最大</option>
+                </select>
+                <span class="hint">仅 DeepSeek 认这个参数；其它厂商请选「模型默认」</span>
+              </div>
               <div class="row"><label>API Key</label><input class="input-text mono" type="password" autocomplete="off" placeholder=${p.has_key ? "留空则不改" : "sk-…"} value=${p.api_key} onInput=${e => upd(i, { api_key: e.target.value })}/></div>
               <div class="ops">
                 <button class="btn quiet" disabled=${testing === p.id} onClick=${() => test(p)}>${testing === p.id ? "测试中…" : "测试连接"}</button>
