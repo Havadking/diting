@@ -545,9 +545,12 @@ class MonitorCore:
                 name = u.get("name") or u.get("uid") or u.get("handle")
                 if not name:
                     continue
+                # color 是生效色（自己没选就用组色，给侧栏/卡片用）；own_color 只是用户自己选的，
+                # 设置抽屉按它回显——否则选「默认」后组色会被当成用户色再写回去，永远回不到默认
                 color = u.get("color") or (groups.get(u.get("group")) if u.get("group") else None) or None
                 out.append({"name": name, "uid": str(u.get("uid") or u.get("handle") or ""),
-                            "source": src, "color": color, "group": u.get("group") or None,
+                            "source": src, "color": color, "own_color": u.get("color") or None,
+                            "group": u.get("group") or None,
                             "mute": bool(u.get("mute")),
                             "check_appends": bool(u.get("check_appends")) if src == "guba" else None})
         return out

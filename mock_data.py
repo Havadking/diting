@@ -243,6 +243,7 @@ class MockCore(core.MonitorCore):
     def list_users(self):
         return [{"name": u["name"], "uid": u["uid"],
                  "color": u.get("color") or GROUPS.get(u.get("group") or "") or None,
+                 "own_color": u.get("color") or None,
                  "group": u.get("group") or None,
                  "mute": bool(u.get("mute")), "check_appends": bool(u.get("check_appends"))}
                 for u in USERS]

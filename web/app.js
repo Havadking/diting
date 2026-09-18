@@ -423,7 +423,9 @@
   }
 
   function Drawer({ users, groups, config, sound, onToggleSound, onClose, onSaved, toast }) {
-    const [pend, setPend] = useState(() => Object.fromEntries(users.map(u => [String(u.uid), { ...u }])));
+    // 抽屉里编辑的是用户自己选的色（own_color），不是含组色的生效色；生效色只用来预览
+    const fromUsers = us => Object.fromEntries(us.map(u => [String(u.uid), { ...u, color: u.own_color || null }]));
+    const [pend, setPend] = useState(() => fromUsers(users));
     // 分组表也是"待保存"状态：改名/删组会连带改 pend 里用户的 group，一起随「保存设置」提交
     const [pendGroups, setPendGroups] = useState(() => groups.map(g => ({ ...g })));
     const [newGroup, setNewGroup] = useState("");
@@ -461,9 +463,9 @@
     const [adding, setAdding] = useState(false);
     const [saving, setSaving] = useState(false);
 
-    useEffect(() => {
-      setPend(Object.fromEntries(users.map(u => [String(u.uid), { ...u }])));
-    }, [users]);
+    useEffect(() => { setPend(fromUsers(users)); }, [users]);
+    // 用户所在分组的组色（按抽屉里未保存的分组表算），用于预览和「默认」色块的文案
+    const groupColorOf = g => { const x = g && pendGroups.find(p => p.name === g); return (x && x.color) || null; };
 
     const upd = (uid, patch) => setPend(p => ({ ...p, [uid]: { ...p[uid], ...patch } }));
 
@@ -604,8 +606,10 @@
           ${users.map(u => {
             const uidStr = String(u.uid);
             const p = pend[uidStr] || u;
+            const gc = groupColorOf(p.group);
+            const eff = p.color || gc;
             return html`
-              <div class="srow" key=${uidStr} style=${p.color ? { "--uc": p.color } : undefined}>
+              <div class="srow" key=${uidStr} style=${eff ? { "--uc": eff } : undefined}>
                 <div class="who">
                   <input class="uname-edit" value=${p.name} title="点击直接修改备注名"
                          onInput=${e => upd(uidStr, { name: e.target.value })}/>
@@ -618,8 +622,9 @@
                     </select>`}
                 </div>
                 <div class="swatches">
-                  <button class=${"swatch none" + (!p.color ? " on" : "")} title="默认（按类型配色）"
-                          onClick=${() => upd(uidStr, { color: null })}>默认</button>
+                  <button class=${"swatch none" + (!p.color ? " on" : "")} title=${gc ? "不单独选色，跟随分组的组色" : "默认（按类型配色）"}
+                          style=${gc ? { "--c": gc, borderColor: gc, color: gc } : undefined}
+                          onClick=${() => upd(uidStr, { color: null })}>${gc ? "组色" : "默认"}</button>
                   ${PALETTE.map(([nm, hx]) => html`
                     <button key=${hx} class=${"swatch" + ((p.color || "").toLowerCase() === hx.toLowerCase() ? " on" : "")} title=${nm}
                             style=${{ "--c": hx }} onClick=${() => upd(uidStr, { color: hx })}/>`)}
