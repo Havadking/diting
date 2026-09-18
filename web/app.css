@@ -197,7 +197,8 @@
   .mkt .vol .tag { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 5px; font-size: 11.5px; font-weight: 600; letter-spacing: .02em; }
   .mkt .vol .tag.more { background: var(--warn-soft); color: color-mix(in srgb, var(--warn) 70%, var(--ink)); }
   .mkt .vol .tag.less { background: var(--bg); color: var(--ink-3); border: 1px solid var(--line); }
-  .mkt .vol .d { font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
+  .mkt .vol .d { font-family: var(--mono); font-size: 12px; color: var(--ink); }
+  .mkt .vol .pct { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); }
   .mkt .vol .vs { font-size: 11.5px; color: var(--ink-3); }
   /* 迷你双柱：今日 vs 昨日同时段，长的那根撑满 44px */
   .mkt .bars { display: inline-flex; flex-direction: column; gap: 2px; width: 44px; }
@@ -213,11 +214,11 @@
   /* 收盘 / 休市 / 接口失败：数字淡化表示不再更新 */
   .mkt.stale .idx .px, .mkt.stale .idx .chg, .mkt.stale .amt .v { opacity: .55; }
   /* 响应式：按信息价值逐级减。断点与顶栏一致。
-     ≤1150px：去掉沪深300、「vs 昨日同时段」文字、迷你柱
+     ≤1150px：去掉沪深300、「vs 昨日同时段」文字、百分比、迷你柱
      ≤900px（竖屏副屏）：再去掉点位、刷新时间、阶段文字、「两市」标签
      ≤480px（手机竖屏）：再去掉成交额和 ✕（「⋯」菜单里仍可隐藏） */
   @media (max-width: 1150px) {
-    .mkt .idx.extra, .mkt .vol .vs, .mkt .vol .bars { display: none; }
+    .mkt .idx.extra, .mkt .vol .vs, .mkt .vol .bars, .mkt .vol .pct { display: none; }
   }
   @media (max-width: 900px) {
     .mkt { padding: 0 10px 0 12px; }

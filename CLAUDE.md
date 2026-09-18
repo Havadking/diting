@@ -68,7 +68,7 @@ appmod.MonitorApp.start = lambda self, silent=False: None   # 跳过联网监控
 - **`server.py` + `web/`** — 网页版，主要维护对象。`server.py` 是纯标准库 `ThreadingHTTPServer`，默认只绑 `127.0.0.1`（`--host 0.0.0.0` 开放局域网给平板/手机看），接口见 `docs/web-design.md` §5；`web/app.js` 是 React 18 + htm 写的单文件前端（htm 是标签模板函数，写法 `` html`<div class=${x}>` ``，不需要 JSX 编译）。所有 `POST` 校验 `Origin` 必须等于自己（拿 `Host` 头比，不是写死 127.0.0.1，所以局域网地址访问也能过），别去掉——这是防止别的网页 fetch 本地端口让程序退出的唯一防线。
 - **`app.py`** — 旧版 tkinter 窗口，只是 `MonitorCore` 的另一层壳：`subscribe()` 一个队列，消费事件画 Treeview。稳定后会删，**不要再往里加功能**。
 - **`summary.py`** — AI 日报：把某人某天的动态预处理、拼提示词、调 OpenAI 兼容接口（DeepSeek 等）。纯函数模块，不碰 core/线程/SQLite；`server.py` 的 `/api/ai/*` 编排它，缓存表 `summaries` 建在 `monitor.get_db()` 里，`MockCore` 覆写成内存版。`config.json` 的 `ai.profiles[].api_key` 明文只在后端，接口只回脱敏 `key_hint`。详见 `docs/onboarding-notes.md` §8.1。
-- **`market.py`** — 顶部大盘条：三大指数 + 两市成交额 + 相对昨日同时段的放量/缩量。纯函数（抓腾讯行情、算阶段与量比）+ `MarketFeed` 独立 daemon 线程，`server.py` 的 `main()` 创建、用 `core._broadcast` 发 `("market", payload)` 事件，**与股吧监控的启停无关**；`MockMarketFeed` 只换掉三个 `_fetch_*`。口径与契约见 `docs/market-strip-design.md`。
+- **`market.py`** — 顶部大盘条：三大指数 + 两市成交额 + 相对昨日同时段的放量/缩量。纯函数（抓腾讯行情、算阶段与量比）+ `MarketFeed` 独立 daemon 线程，`server.py` 的 `main()` 创建、用 `core._broadcast` 发 `("market", payload)` 事件，**与股吧监控的启停无关**；`MockMarketFeed` 只换掉两个 `_fetch_*`。口径与契约见 `docs/market-strip-design.md`。
 - **`monitor.py`** — 双重身份：① 被 `core.py` import 的抓取/解析核心；② 独立的命令行推送版（`main()`）。注意 **`monitor.py` 的命令行 `main()` 只处理股吧用户**，推特/微博是 GUI 独有的。改抓取逻辑时两边都受影响，改轮询逻辑时通常只动 `core.py`。
 
 `core.py` 顶部的 `ENABLE_TWITTER` / `ENABLE_WEIBO` 目前是 `False`——推特/微博功能暂时下线（不轮询、UI 也不提），但代码和 `monitor.py` 里的抓取逻辑都完整保留，改成 `True` 即可恢复。改任何"用户列表"相关的地方（`core.py` 的 `_run_loop`/`describe_config`/`list_users`/`save_users`、`app.py` `open_colors` 的 `rows`/`editable_users`）时留意这两个开关，别让隐藏的来源重新泄漏到 UI，也别让保存逻辑遍历到没渲染出来的用户而误清空他们的配置。`list_users()` 和 `save_users()` 用同一份"启用来源"列表就是为了这个。
@@ -174,6 +174,6 @@ commit message 用 conventional commits 格式，说明"为什么"而非"改了�
 - 股吧帖子全文/追加：`gbapi.eastmoney.com/content/api/Post/ArticleContent?postid={post_id}&plat=web&version=200&product=guba`（JSON，`post.post_content` 全文 HTML、`post.post_add_list` 追加，见上方「帖子全文补全与追加检查」）
 - 推特：外部 CLI `twitter user-posts @handle -n 40 --json`（`pipx install twitter-cli`），靠环境变量 `TWITTER_AUTH_TOKEN` / `TWITTER_CT0` 认证。子进程必须带 `_no_window_kwargs()` 隐藏控制台黑框。
 - 微博：`weibo.com/ajax/statuses/mymblog`，Cookie 从 `config.json` 的 `weibo_cookie` 读（至少含 `SUB`）。
-- 大盘行情（腾讯）：实时 `qt.gtimg.cn/q=s_sh000001,...`（GBK、`~` 分隔），5 分钟 K `ifzq.gtimg.cn/appstock/app/kline/mkline?param=sh000001,m5,,100`（只有成交量没有成交额），日 K `ifzq.gtimg.cn/appstock/app/fqkline/get?param=sh000001,day,,,3,qfq`。**别换回东财 push2**：连续请求几十次后会被 TLS 断连封 IP，详见 `docs/market-strip-design.md` §1。
+- 大盘行情（腾讯）：实时 `qt.gtimg.cn/q=s_sh000001,...`（GBK、`~` 分隔），最近 5 天分时 `ifzq.gtimg.cn/appstock/app/day/query?code=sh000001`（每分钟累计成交量/额，「昨日同时段」直接取昨天同一分钟）。放量/缩量按**成交额**比，与东财「较昨日 ±xxx 亿」同口径。**别换回东财 push2**：本机 Python/curl 对它的请求会被 TLS 层断连（浏览器不受影响），详见 `docs/market-strip-design.md` §1；**别用新浪的 399001**：那是成分股合计不是深市全市场。
 
 全是非官方接口，随时可能变。抓取失败走 `q.put(("status", ...))` 显示到状态栏，**不要让单个来源的异常中断整个轮询循环**。

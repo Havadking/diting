@@ -871,6 +871,8 @@
   const fmtAmt = yuan => yuan >= 1e12
     ? html`${(yuan / 1e12).toFixed(2)}<span class="unit">万亿</span>`
     : html`${Math.round(yuan / 1e8)}<span class="unit">亿</span>`;
+  // 较昨日的成交额差：整数亿，带符号；≥1 万亿也按亿显示（"+12345亿"），跟东财首页一致
+  const fmtDiff = yuan => (yuan > 0 ? "+" : yuan < 0 ? "−" : "") + Math.round(Math.abs(yuan) / 1e8) + "亿";
   function MarketStrip({ data, onHide }) {
     if (!data) return html`<div class="mkt"><span class="seg"><span class="muted">大盘数据加载中…</span></span></div>`;
     const ph = PHASE[data.phase] || PHASE.closed;
@@ -888,10 +890,12 @@
         </span>
         ${data.amt > 0 && html`<span class="seg amt"><span class="lb">两市</span><span class="v">${fmtAmt(data.amt)}</span></span>`}
         ${vol ? html`
-          <span class="seg vol" title=${"两市成交量 " + vol.vs + " " + fmtPct(vol.ratio * 100)}>
+          <span class="seg vol" title=${"两市成交额 " + vol.vs + "：" + (vol.diff != null ? fmtDiff(vol.diff) + "（" + fmtPct(vol.ratio * 100) + "）" : fmtPct(vol.ratio * 100))}>
             ${vol.tag === "more" && html`<span class="tag more">▲ 放量</span>`}
             ${vol.tag === "less" && html`<span class="tag less">▼ 缩量</span>`}
-            <span class="d">${fmtPct(vol.ratio * 100)}</span><span class="vs">${vol.vs}</span>
+            <span class="d">${vol.diff != null ? fmtDiff(vol.diff) : fmtPct(vol.ratio * 100)}</span>
+            ${vol.diff != null && html`<span class="pct">${fmtPct(vol.ratio * 100)}</span>`}
+            <span class="vs">${vol.vs}</span>
             <span class="bars"><i class="today" style=${{ width: w1 + "%" }}/><i style=${{ width: w2 + "%" }}/></span>
           </span>` : data.phase === "pre" ? html`<span class="seg vol"><span class="muted">开盘后开始比较成交量</span></span>` : null}
         ${data.err && html`<span class="seg"><span class="err" title=${data.err}>${data.err}</span></span>`}
