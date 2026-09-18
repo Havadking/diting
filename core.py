@@ -138,7 +138,7 @@ class MonitorCore:
             items = items[total - limit:]
         return {"items": items, "has_more": total > len(items) or self.db_count() > total,
                 "status": self._status_payload(),
-                "users": self.list_users(), "config": self.poll_config()}
+                "users": self.list_users(), "groups": self.list_groups(), "config": self.poll_config()}
 
     def db_count(self):
         """messages.db 总条数；开不了库就当 0。HTTP 线程调用，独立短连接。"""
@@ -370,7 +370,7 @@ class MonitorCore:
         except Exception as e:
             return "保存 config.json 失败：%s" % e
         self.refresh_config_maps()
-        self._broadcast("config", {"users": self.list_users()})
+        self._broadcast("config", {"users": self.list_users(), "groups": self.list_groups()})
         return None
 
     def manage_config(self, body):
@@ -399,6 +399,8 @@ class MonitorCore:
                 new_user["mute"] = True
             if u.get("check_appends"):
                 new_user["check_appends"] = True
+            if (u.get("group") or "").strip():
+                new_user["group"] = u["group"].strip()
             users.append(new_user)
             cfg["users"] = users
 
@@ -433,11 +435,22 @@ class MonitorCore:
                         u["mute"] = True
                     else:
                         u.pop("mute", None)
+                    if "group" in p:
+                        g = (p.get("group") or "").strip()
+                        if g:
+                            u["group"] = g
+                        else:
+                            u.pop("group", None)
                     if i == 0:
                         if p.get("check_appends"):
                             u["check_appends"] = True
                         else:
                             u.pop("check_appends", None)
+            # 分组表整体替换（列表顺序就是显示顺序）；没传 groups 的老客户端不动它
+            if isinstance(body.get("groups"), list):
+                err = self._apply_groups(cfg, body["groups"], sources)
+                if err:
+                    return err
             c = body.get("config") or {}
             if "poll_interval_seconds" in c:
                 try:
@@ -457,9 +470,50 @@ class MonitorCore:
         except Exception as e:
             return "保存 config.json 失败：%s" % e
         self.refresh_config_maps()
-        self._broadcast("config", {"users": self.list_users(), "config": self.poll_config()})
+        self._broadcast("config", {"users": self.list_users(), "groups": self.list_groups(),
+                                   "config": self.poll_config()})
         return None
 
+
+    @staticmethod
+    def _apply_groups(cfg, groups, user_lists):
+        """把前端传来的 [{name, color}] 写回 cfg["groups"]（dict 保序 = 显示顺序），
+        并把引用了已删除分组的用户 group 字段清掉，避免侧栏出现"幽灵分组"。"""
+        out = {}
+        for g in groups:
+            if not isinstance(g, dict):
+                continue
+            name = str(g.get("name") or "").strip()
+            if not name:
+                continue
+            if len(name) > 20:
+                return "分组名「%s…」太长（最多 20 字）" % name[:8]
+            if name in out:
+                return "分组名「%s」重复" % name
+            out[name] = str(g.get("color") or "")
+        cfg["groups"] = out
+        for u_list in user_lists:
+            for u in u_list:
+                if u.get("group") and u["group"] not in out:
+                    u.pop("group", None)
+        return None
+
+    def list_groups(self):
+        """分组列表 [{name, color}]，顺序同 config.json 里的顺序。
+        用户引用了但 groups 里没定义的分组名也补进来（老配置手写的情况），颜色为空。"""
+        try:
+            cfg = monitor.load_config()
+        except Exception:
+            return []
+        groups = cfg.get("groups", {}) or {}
+        out = [{"name": k, "color": v or None} for k, v in groups.items() if k]
+        known = set(groups)
+        for u in self.list_users():
+            g = u.get("group")
+            if g and g not in known:
+                known.add(g)
+                out.append({"name": g, "color": None})
+        return out
 
     def poll_config(self):
         """前端要展示的轮询参数。读配置失败给默认值。"""
@@ -491,9 +545,9 @@ class MonitorCore:
                 name = u.get("name") or u.get("uid") or u.get("handle")
                 if not name:
                     continue
-                color = u.get("color") or (groups.get(u.get("group")) if u.get("group") else None)
+                color = u.get("color") or (groups.get(u.get("group")) if u.get("group") else None) or None
                 out.append({"name": name, "uid": str(u.get("uid") or u.get("handle") or ""),
-                            "source": src, "color": color,
+                            "source": src, "color": color, "group": u.get("group") or None,
                             "mute": bool(u.get("mute")),
                             "check_appends": bool(u.get("check_appends")) if src == "guba" else None})
         return out

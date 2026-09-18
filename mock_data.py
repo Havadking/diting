@@ -13,11 +13,13 @@ from datetime import datetime, timedelta
 import core
 
 USERS = [
-    {"uid": "6112353845000000", "name": "股海老船长", "color": "#1772B4", "check_appends": True},
-    {"uid": "7423000112000000", "name": "半仓过节", "color": "#ED5126"},
-    {"uid": "5091223300000000", "name": "茅台信徒", "color": "#1BA784", "mute": True},
+    {"uid": "6112353845000000", "name": "股海老船长", "color": "#1772B4", "check_appends": True, "group": "游资"},
+    {"uid": "7423000112000000", "name": "半仓过节", "color": "#ED5126", "group": "游资"},
+    {"uid": "5091223300000000", "name": "茅台信徒", "color": "#1BA784", "mute": True, "group": "价值派"},
     {"uid": "8830011290000000", "name": "量化小张"},
 ]
+# 分组：名 -> 组色（可为空串），顺序即侧栏显示顺序；和 config.json 的 groups 字段同构
+GROUPS = {"游资": "#F97D1C", "价值派": ""}
 
 # (天数偏移, 时间, 用户名, 类型, 股吧, 展示用 content —— 已按 core._add_item 的规则拼好前缀[, (被回复的评论作者, 评论内容)])
 # 天数偏移为 0 时"时间"是负的分钟数（距现在多久之前），这样今天的示例永远排在定时随机推送之前
@@ -105,7 +107,9 @@ class MockCore(core.MonitorCore):
         self.refresh_config_maps()
 
     def refresh_config_maps(self):
-        self.color_map = {u["name"]: u["color"] for u in USERS if u.get("color")}
+        self.color_map = {u["name"]: (u.get("color") or GROUPS.get(u.get("group") or "") or None)
+                          for u in USERS}
+        self.color_map = {k: v for k, v in self.color_map.items() if v}
         self.muted = {u["name"] for u in USERS if u.get("mute")}
 
     def describe_config(self):
@@ -190,6 +194,7 @@ class MockCore(core.MonitorCore):
             if u.get("color"): new_u["color"] = u["color"]
             if u.get("mute"): new_u["mute"] = True
             if u.get("check_appends"): new_u["check_appends"] = True
+            if (u.get("group") or "").strip(): new_u["group"] = u["group"].strip()
             USERS.append(new_u)
         elif action == "delete":
             uid = str(body.get("uid") or (body.get("user") or {}).get("uid") or "").strip()
@@ -206,8 +211,17 @@ class MockCore(core.MonitorCore):
                 else: u.pop("color", None)
                 if p.get("mute"): u["mute"] = True
                 else: u.pop("mute", None)
+                if "group" in p:
+                    if (p.get("group") or "").strip(): u["group"] = p["group"].strip()
+                    else: u.pop("group", None)
                 if p.get("check_appends"): u["check_appends"] = True
                 else: u.pop("check_appends", None)
+            if isinstance(body.get("groups"), list):
+                cfg = {"groups": GROUPS}
+                err = core.MonitorCore._apply_groups(cfg, body["groups"], [USERS])
+                if err:
+                    return err
+                GROUPS.clear(); GROUPS.update(cfg["groups"])
             c = body.get("config") or {}
             if "poll_interval_seconds" in c:
                 try: self.interval = max(2, min(3600, int(c["poll_interval_seconds"])))
@@ -215,7 +229,8 @@ class MockCore(core.MonitorCore):
         else:
             return "未知操作 action=%s" % action
         self.refresh_config_maps()
-        self._broadcast("config", {"users": self.list_users(), "config": self.poll_config()})
+        self._broadcast("config", {"users": self.list_users(), "groups": self.list_groups(),
+                                   "config": self.poll_config()})
         return None
 
     def save_users(self, patch):
@@ -226,9 +241,14 @@ class MockCore(core.MonitorCore):
 
 
     def list_users(self):
-        return [{"name": u["name"], "uid": u["uid"], "color": u.get("color"),
+        return [{"name": u["name"], "uid": u["uid"],
+                 "color": u.get("color") or GROUPS.get(u.get("group") or "") or None,
+                 "group": u.get("group") or None,
                  "mute": bool(u.get("mute")), "check_appends": bool(u.get("check_appends"))}
                 for u in USERS]
+
+    def list_groups(self):
+        return [{"name": k, "color": v or None} for k, v in GROUPS.items()]
 
     def start(self):
         if self.worker and self.worker.is_alive():

@@ -146,6 +146,8 @@ key, kind, icon, time, title, content, bar, ctx_user, ctx_text, link
 - **类型**（`KIND_BG` / CSS 的 `--k-*` token）：网页版是卡片上的小 pill，旧窗口版是整行底色
 - **用户色**（`config.json` 的 `color` 或 `groups`，8 个中国传统色见 `PALETTE`）：网页版是卡片左侧 4px 色条 + 用户名，旧窗口版染整行文字（tkinter Treeview 的 tag 只能按整行设，控件限制不是 bug）
 
+`groups{名:色}` 同时也是**用户分组**的定义（dict 顺序 = 侧栏顺序，色可为空串），用户的 `group` 字段指向组名。`core.list_groups()` / `manage_config(update_all)` 的 `groups` 列表负责读写；前端筛选 `filter.group` 与 `filter.user` 互斥。改分组相关逻辑时 `mock_data.py` 的 `GROUPS` 要同步。
+
 设计 token（颜色、字体、断点）以 `docs/web-design.md` §7 和 `web/app.css` 顶部的 `:root` 为准。
 
 ## .gitignore 采用白名单策略

@@ -139,6 +139,7 @@ key, kind, icon, time, title, content, bar, ctx_user, ctx_text, link
 ### 4.3 配置与状态
 
 - `config.json`：`poll_interval_seconds` / `monitor_posts` / `monitor_replies` / `append_check_interval_seconds` / `push{type,key}` / `groups{名:色}` / 三个来源的用户数组（`users` / `twitter_users` / `weibo_users`）/ `weibo_cookie` / 各来源轮询间隔。用户级可选字段：`color` / `group` / `mute` / `check_appends`。
+  - `groups` 既是配色表也是**分组定义**：dict 的插入顺序就是侧栏显示顺序（`json.dump` 保序），值为空串表示不设组色。`core.list_groups()` 会把用户引用了但表里没有的组名也补出来（颜色 `None`），侧栏才不会出现"有归属却没组头"的用户。`manage_config(update_all)` 收到 `groups` 列表时整表替换，并把引用了已删组的用户 `group` 清掉；没传 `groups` 的老客户端不动它。
 - `state.json`：`{skey: [key, ...]}`，每来源保留最近 500 条。skey：股吧用**裸 uid**、推特 `tw:<handle>`、微博 `wb:<uid>`、追加 `ap:<post_id>`。
 - **`config.json` 不在版本库里**（含 UID/Cookie/推送 key）。`save_config()` 先写 `.tmp` 再 `os.replace`，避免写一半崩了把配置清空。
 
@@ -235,14 +236,14 @@ my_stop = self.stop_event                # 新线程只认这个局部引用
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/`、`/favicon.ico`、`/assets/<path>` | 静态文件；`os.path.realpath` 校验真实路径必须在 `web/` 之下（防目录穿越） |
-| GET | `/api/snapshot?limit=300` | `{items, has_more, status{text,running,last_check}, users[], config{}}` |
+| GET | `/api/snapshot?limit=300` | `{items, has_more, status{text,running,last_check}, users[], groups[], config{}}` |
 | GET | `/api/items?before=&before_key=&limit=200` | 「加载更早」翻页，二元游标 |
 | GET | `/api/search?q=&limit=100` | 全库 LIKE 检索 `content` / `bar` / `name` |
 | GET | `/api/probe_user?uid=` | 探测 UID 是否真实存在并回显东财昵称（新增用户前用） |
 | GET | `/api/events` | SSE：连上先发一条 `status`，之后转发广播事件，`q.get(timeout=25)` 超时发 `: ping` 保活 |
 | POST | `/api/control` | `start` / `stop` / `clear` / `test_toast` / `quit` |
 | POST | `/api/users` | 旧版配色/静音/查追加保存（按 name 匹配） |
-| POST | `/api/users/manage` | 新版统一管理：`add` / `delete` / `update_all`（含轮询参数），前端设置抽屉走这个 |
+| POST | `/api/users/manage` | 新版统一管理：`add` / `delete` / `update_all`（含轮询参数、用户 `group`、整张 `groups` 表），前端设置抽屉走这个 |
 | GET/POST | `/api/ai/settings` | AI 接口配置（`config.json` 的 `ai` 字段）；GET 只给脱敏 key，POST 不带 key 表示沿用旧的 |
 | POST | `/api/ai/test` | 「测试连接」 |
 | GET/POST | `/api/ai/summary` | AI 日报：GET 读缓存 + 当前条数，POST 生成（`force` 强制重生成）。见 §8.1 |
@@ -283,12 +284,14 @@ React 18 + htm，单文件 `web/app.js`（约 1060 行），所有状态在一�
 | （启动 / 重连）`GET /api/snapshot` | `snapshot` | 首次整体替换；**已 loaded 时改为 merge**，以保留已翻出来的更早历史 |
 | `history` / `new` | `append` | 按 `key` 去重、按 `(time, key)` 升序插入 |
 | `status` | `status` | 顶栏状态胶囊 |
-| `config` | `config` | 用户列表（侧栏 / 设置抽屉） |
+| `config` | `config` | 用户列表 + 分组表（侧栏 / 设置抽屉） |
 | `cleared` | `cleared` | 清空列表 |
 
-本地 UI 状态：`drawer` / `menu` / `theme` / `rail`（侧栏收起）/ `dense`（紧凑模式）/ `sound` / `query` / `searchDb` / `filter{user, kindOff}` / `toggled`（日期折叠）/ `newKeys` / `pendingBelow` / `unread` / `firstUnreadKey`。
+本地 UI 状态：`drawer` / `menu` / `theme` / `rail`（侧栏收起）/ `dense`（紧凑模式）/ `sound` / `query` / `searchDb` / `filter{user, group, kindOff}`（`user` 与 `group` 互斥，选一个就清另一个；`group` 取 `UNGROUPED` 常量表示"只看未分组"）/ `groupFold`（侧栏被收起的组名）/ `toggled`（日期折叠）/ `newKeys` / `pendingBelow` / `unread` / `firstUnreadKey`。
 
-`localStorage` 键：`diting.rail` / `diting.theme`（`system|light|dark`）/ `diting.filter` / `diting.collapsed`（**只记非今天**）/ `diting.dense` / `diting.sound`。读写都经 `store` 小工具包了 `try/catch`（隐私窗口下 accessor 会抛）。
+按组筛选靠 `groupOfUser`（用户名 → 组名）判断条目归属，`onNew` 里走 `groupOfRef` 拿最新值（同 `filterRef` 的理由）。侧栏没有任何分组时退化成平铺列表；有分组时按 `s.groups` 顺序收纳，未分组用户放最后一桶。
+
+`localStorage` 键：`diting.rail` / `diting.theme`（`system|light|dark`）/ `diting.filter` / `diting.groupFold` / `diting.collapsed`（**只记非今天**）/ `diting.dense` / `diting.sound`。读写都经 `store` 小工具包了 `try/catch`（隐私窗口下 accessor 会抛）。
 
 ### 9.3 几个"看起来可以优化、其实不能动"的点
 
@@ -324,6 +327,7 @@ React 18 + htm，单文件 `web/app.js`（约 1060 行），所有状态在一�
 7. SSE 断线横幅 + 自动重连补漏
 8. 「退出程序」按钮（关标签页进程不会退出，必须有出口）
 9. 深色模式（默认跟随系统）、侧栏可收缩成窄轨、竖屏三档响应式断点、标签页标题未读数
+10. 用户分组：设置抽屉里建组 / 改名 / 排序 / 设组色 / 给用户选组，侧栏按组收纳、可折叠、点组头「只看本组」
 
 ---
 

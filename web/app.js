@@ -254,7 +254,7 @@
 
   /* ---------- store ---------- */
   const initial = { items: [], keys: new Set(), status: { text: "连接中…", running: false, last_check: "" },
-                    users: [], config: {}, connected: false, loaded: false, quit: false, hasMore: false };
+                    users: [], groups: [], config: {}, connected: false, loaded: false, quit: false, hasMore: false };
   const byTime = (a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : (a.key < b.key ? -1 : 1));
   function mergeItems(items, keys, incoming) {
     let changed = false;
@@ -274,7 +274,8 @@
         // 重连补漏时保留已经翻出来的更早历史：快照只覆盖最近 N 条，用 merge 而不是整体替换
         const m = s.loaded ? mergeItems(s.items, s.keys, items) : null;
         return { ...s, items: m ? m.items : items, keys: m ? m.keys : new Set(items.map(i => i.key)),
-                 status: a.data.status || s.status, users: a.data.users || [], config: a.data.config || {},
+                 status: a.data.status || s.status, users: a.data.users || [], groups: a.data.groups || [],
+                 config: a.data.config || {},
                  loaded: true, hasMore: s.loaded ? s.hasMore : !!a.data.has_more };
       }
       case "append": {
@@ -288,12 +289,14 @@
       case "status": return { ...s, status: a.status };
       case "cleared": return { ...s, items: [], keys: new Set(), hasMore: true };
       case "connected": return { ...s, connected: a.value };
-      case "config": return { ...s, users: a.users || s.users };
+      case "config": return { ...s, users: a.users || s.users, groups: a.groups || s.groups };
       case "quit": return { ...s, quit: true, connected: false };
       default: return s;
     }
   }
 
+  // 侧栏里「未分组」这一桶的筛选值；用全角括号避免和用户自己起的组名撞上
+  const UNGROUPED = "（未分组）";
   const PALETTE = [
     ["朱红", "#ED5126"], ["橘橙", "#F97D1C"], ["土黄", "#D6A01D"], ["竹绿", "#1BA784"],
     ["翠蓝", "#1E9EB3"], ["群青", "#1772B4"], ["青莲", "#8B2671"], ["品红", "#EF3473"],
@@ -419,8 +422,37 @@
     return msg ? html`<div class=${"toast" + (msg.kind === "error" ? " error" : "")} role="status">${msg.text}</div>` : null;
   }
 
-  function Drawer({ users, config, sound, onToggleSound, onClose, onSaved, toast }) {
+  function Drawer({ users, groups, config, sound, onToggleSound, onClose, onSaved, toast }) {
     const [pend, setPend] = useState(() => Object.fromEntries(users.map(u => [String(u.uid), { ...u }])));
+    // 分组表也是"待保存"状态：改名/删组会连带改 pend 里用户的 group，一起随「保存设置」提交
+    const [pendGroups, setPendGroups] = useState(() => groups.map(g => ({ ...g })));
+    const [newGroup, setNewGroup] = useState("");
+    useEffect(() => { setPendGroups(groups.map(g => ({ ...g }))); }, [groups]);
+    const updGroup = (i, patch) => setPendGroups(gs => gs.map((g, j) => j === i ? { ...g, ...patch } : g));
+    const renameGroup = (i, name) => {
+      const old = pendGroups[i].name;
+      updGroup(i, { name });
+      setPend(p => Object.fromEntries(Object.entries(p).map(([k, u]) => [k, u.group === old ? { ...u, group: name } : u])));
+    };
+    const delGroup = i => {
+      const g = pendGroups[i];
+      const n = Object.values(pend).filter(u => u.group === g.name).length;
+      if (n && !window.confirm("删除分组「" + g.name + "」？其中 " + n + " 位用户会变成未分组（用户本身不会被删）。")) return;
+      setPendGroups(gs => gs.filter((_, j) => j !== i));
+      setPend(p => Object.fromEntries(Object.entries(p).map(([k, u]) => [k, u.group === g.name ? { ...u, group: null } : u])));
+    };
+    const moveGroup = (i, d) => setPendGroups(gs => {
+      const j = i + d; if (j < 0 || j >= gs.length) return gs;
+      const n = gs.slice(); [n[i], n[j]] = [n[j], n[i]]; return n;
+    });
+    const addGroup = () => {
+      const name = newGroup.trim();
+      if (!name) return;
+      if (name.length > 20) return toast("分组名最多 20 字", "error");
+      if (pendGroups.some(g => g.name === name)) return toast("已有同名分组", "error");
+      setPendGroups(gs => [...gs, { name, color: null }]);
+      setNewGroup("");
+    };
     const [pollSec, setPollSec] = useState(config.poll_interval_seconds || 60);
     const [appendSec, setAppendSec] = useState(config.append_check_interval_seconds || 300);
     const [uidInput, setUidInput] = useState("");
@@ -494,9 +526,11 @@
             uid: String(u.uid),
             name: (u.name || "").trim(),
             color: u.color || null,
+            group: u.group || null,
             mute: !!u.mute,
             check_appends: !!u.check_appends
           })),
+          groups: pendGroups.map(g => ({ name: g.name.trim(), color: g.color || null })).filter(g => g.name),
           config: {
             poll_interval_seconds: Number(pollSec) || 60,
             append_check_interval_seconds: Number(appendSec) || 300
@@ -516,7 +550,7 @@
         <header>
           <div>
             <h3>用户设置与参数</h3>
-            <p>增删监控 · 配色 · 静音 · 查追加 · 轮询周期</p>
+            <p>增删监控 · 分组 · 配色 · 静音 · 查追加 · 轮询周期</p>
           </div>
           <span class="spacer"/>
           <button class="btn quiet" onClick=${onClose}>关闭</button>
@@ -534,6 +568,34 @@
           </div>
         </div>
 
+        <div class="group-box">
+          <h4>分组管理 <small>组色是组内用户的默认颜色，用户自己选了颜色则以用户为准</small></h4>
+          ${pendGroups.map((g, i) => html`
+            <div class="grp-row" key=${i}>
+              <div class="grp-ord">
+                <button class="btn-mini" title="上移" disabled=${i === 0} onClick=${() => moveGroup(i, -1)}>▲</button>
+                <button class="btn-mini" title="下移" disabled=${i === pendGroups.length - 1} onClick=${() => moveGroup(i, 1)}>▼</button>
+              </div>
+              <input class="uname-edit grp-name" value=${g.name} maxlength="20" title="点击直接改组名"
+                     style=${g.color ? { "--uc": g.color } : undefined}
+                     onInput=${e => renameGroup(i, e.target.value)}/>
+              <span class="grp-n">${Object.values(pend).filter(u => u.group === g.name).length} 人</span>
+              <div class="swatches">
+                <button class=${"swatch none" + (!g.color ? " on" : "")} title="不设组色" onClick=${() => updGroup(i, { color: null })}>无</button>
+                ${PALETTE.map(([nm, hx]) => html`
+                  <button key=${hx} class=${"swatch" + ((g.color || "").toLowerCase() === hx.toLowerCase() ? " on" : "")} title=${nm}
+                          style=${{ "--c": hx }} onClick=${() => updGroup(i, { color: hx })}/>`)}
+              </div>
+              <button class="btn-del" title="删除分组" onClick=${() => delGroup(i)}>${I.trash}</button>
+            </div>`)}
+          <div class="add-form">
+            <input class="input-text name-input" placeholder="新分组名" value=${newGroup} maxlength="20"
+                   onInput=${e => setNewGroup(e.target.value)} onKeyDown=${e => e.key === "Enter" && addGroup()}/>
+            <button class="btn quiet" onClick=${addGroup}>+ 新建分组</button>
+            ${!pendGroups.length && html`<span class="hint">还没有分组；建好后在下方给每位用户选择所属分组，侧栏会按组收纳并支持「只看本组」</span>`}
+          </div>
+        </div>
+
         <div class="legend">
           ${PALETTE.map(([nm, hx]) => html`<span key=${hx}><i style=${{ "--c": hx }}/>${nm}</span>`)}
         </div>
@@ -548,6 +610,12 @@
                   <input class="uname-edit" value=${p.name} title="点击直接修改备注名"
                          onInput=${e => upd(uidStr, { name: e.target.value })}/>
                   <span>${u.uid}</span>
+                  ${pendGroups.length > 0 && html`
+                    <select class="grp-sel" value=${p.group || ""} title="所属分组"
+                            onChange=${e => upd(uidStr, { group: e.target.value || null })}>
+                      <option value="">未分组</option>
+                      ${pendGroups.map(g => html`<option key=${g.name} value=${g.name}>${g.name}</option>`)}
+                    </select>`}
                 </div>
                 <div class="swatches">
                   <button class=${"swatch none" + (!p.color ? " on" : "")} title="默认（按类型配色）"
@@ -953,11 +1021,15 @@
     const clearSearch = () => { setQuery(""); setSearchDb(null); };
 
     const [openKey, setOpenKey] = useState(null);
-    // 筛选：user 为 null 表示全部；kindOff 是被关掉的类型
+    // 筛选：user / group 互斥（选了某人就不再限组，选了组就不限人），都为 null 表示全部；kindOff 是被关掉的类型
     const [filter, setFilter] = useState(() => {
       const f = store.get("diting.filter", {}) || {};
-      return { user: f.user || null, kindOff: new Set(Array.isArray(f.kindOff) ? f.kindOff : []) };
+      return { user: f.user || null, group: f.group || null, kindOff: new Set(Array.isArray(f.kindOff) ? f.kindOff : []) };
     });
+    // 侧栏分组折叠：只记被手动收起的组名
+    const [groupFold, setGroupFold] = useState(() => { const v = store.get("diting.groupFold", []); return new Set(Array.isArray(v) ? v : []); });
+    useEffect(() => store.set("diting.groupFold", [...groupFold]), [groupFold]);
+    const toggleFold = g => setGroupFold(prev => { const n = new Set(prev); n.has(g) ? n.delete(g) : n.add(g); return n; });
     // 日期折叠：只记用户手动点过的（非今天的），默认非今天折叠、今天展开
     const [toggled, setToggled] = useState(() => new Map(Object.entries(store.get("diting.collapsed", {}) || {})));
     const [newKeys, setNewKeys] = useState(() => new Set());
@@ -971,7 +1043,7 @@
     const td = today();
 
     useEffect(() => store.set("diting.rail", rail), [rail]);
-    useEffect(() => store.set("diting.filter", { user: filter.user, kindOff: [...filter.kindOff] }), [filter]);
+    useEffect(() => store.set("diting.filter", { user: filter.user, group: filter.group, kindOff: [...filter.kindOff] }), [filter]);
     useEffect(() => {
       const o = {}; for (const [d, v] of toggled) if (d !== td) o[d] = v;
       store.set("diting.collapsed", o);
@@ -1035,7 +1107,12 @@
 
     // 新动态到达：标「新」、算 FAB / 标题计数。筛选条件走 ref 拿最新值，避免 SSE effect 依赖它而反复重连。
     const filterRef = useRef(filter); filterRef.current = filter;
-    const matches = (it, f) => (!f.user || it.name === f.user) && !f.kindOff.has(it.kind);
+    // 用户名 -> 组名（未分组为 ""）。按组筛选时靠它判断条目归属；新动态到达时同样走 ref 拿最新值
+    const groupOfUser = useMemo(() => Object.fromEntries(s.users.map(u => [u.name, u.group || ""])), [s.users]);
+    const groupOfRef = useRef(groupOfUser); groupOfRef.current = groupOfUser;
+    const matches = (it, f, gmap) => (!f.user || it.name === f.user)
+      && (!f.group || (gmap[it.name] || "") === (f.group === UNGROUPED ? "" : f.group))
+      && !f.kindOff.has(it.kind);
     const onNew = useCallback((entries) => {
       const fresh = (entries || []).filter(e => e && e.key);
       if (!fresh.length) return;
@@ -1043,7 +1120,7 @@
       dispatch({ type: "append", items: fresh });
       setNewKeys(prev => { const n = new Set(prev); fresh.forEach(e => n.add(e.key)); return n; });
       setTimeout(() => setNewKeys(prev => { const n = new Set(prev); fresh.forEach(e => n.delete(e.key)); return n; }), NEW_MARK_MS);
-      const visibleCount = fresh.filter(e => matches(e, filterRef.current)).length;
+      const visibleCount = fresh.filter(e => matches(e, filterRef.current, groupOfRef.current)).length;
       if (document.visibilityState !== "visible") setUnread(u => u + visibleCount);
       if (wasAtBottom) {
         followRef.current = true;   // 由下面的 useLayoutEffect 在新卡片进 DOM 后立刻滚
@@ -1083,7 +1160,7 @@
       on("new", onNew);
       on("status", d => dispatch({ type: "status", status: d }));
       on("cleared", () => { dispatch({ type: "cleared" }); setPendingBelow(0); });
-      on("config", d => dispatch({ type: "config", users: d.users }));
+      on("config", d => dispatch({ type: "config", users: d.users, groups: d.groups }));
       return () => { alive = false; es.close(); };
     }, [onNew]);
 
@@ -1113,7 +1190,7 @@
     }, [s.items, td]);
 
     const activeQuery = query.trim();
-    const shown = useMemo(() => s.items.filter(i => matches(i, filter)), [s.items, filter]);
+    const shown = useMemo(() => s.items.filter(i => matches(i, filter, groupOfUser)), [s.items, filter, groupOfUser]);
 
     const filteredShown = useMemo(() => {
       if (searchDb !== null) return searchDb;
@@ -1143,9 +1220,29 @@
       return toggled.has(d) ? toggled.get(d) : d !== td;
     };
     const toggleDate = d => setToggled(m => { const n = new Map(m); n.set(d, !collapsedOf(d)); return n; });
-    const setUser = u => setFilter(f => ({ ...f, user: f.user === u ? null : u }));
+    const setUser = u => setFilter(f => ({ ...f, group: null, user: f.user === u ? null : u }));
+    const setGroup = g => setFilter(f => ({ ...f, user: null, group: f.group === g ? null : g }));
     const toggleKind = k => setFilter(f => { const n = new Set(f.kindOff); n.has(k) ? n.delete(k) : n.add(k); return { ...f, kindOff: n }; });
-    const filtering = filter.user || filter.kindOff.size > 0;
+    const filtering = filter.user || filter.group || filter.kindOff.size > 0;
+    // 侧栏分组视图：按 s.groups 顺序收纳，未分组的用户放最后；没定义任何分组时退化成平铺
+    const sideGroups = useMemo(() => {
+      if (!s.groups.length) return null;
+      const buckets = new Map(s.groups.map(g => [g.name, { ...g, users: [] }]));
+      const rest = [];
+      for (const u of s.users) (u.group && buckets.has(u.group) ? buckets.get(u.group).users : rest).push(u);
+      const out = [...buckets.values()];
+      if (rest.length) out.push({ name: UNGROUPED, color: null, users: rest, ungrouped: true });
+      return out;
+    }, [s.groups, s.users]);
+    const userRow = (u, nested) => html`
+      <button key=${u.uid + u.name} class=${"urow" + (filter.user === u.name ? " on" : "") + (nested ? " nested" : "")}
+              title=${u.name + "（今日 " + (todayCount.m[u.name] || 0) + " 条）"} onClick=${() => setUser(u.name)}>
+        <span class=${"sw" + (!u.color ? " default-bg" : "")} style=${{ background: u.color || "var(--line-strong)" }}>
+          ${userInitial(u.name)}
+        </span>
+        <span class="nm"><span>${u.name}</span>${u.mute && I.mute}${u.check_appends && html`<span class="tag-mini">追加</span>`}</span>
+        <span class="cnt">${todayCount.m[u.name] || 0}</span>
+      </button>`;
 
     const stockDict = useMemo(() => {
       const dict = { ...POPULAR_STOCKS };
@@ -1253,20 +1350,33 @@
           <div>
             <h4>监控用户</h4>
             <div class="ulist">
-              <button class=${"urow" + (!filter.user ? " on" : "")} title="全部用户" onClick=${() => setUser(null)}>
+              <button class=${"urow" + (!filter.user && !filter.group ? " on" : "")} title="全部用户" onClick=${() => setFilter(f => ({ ...f, user: null, group: null }))}>
                 <span class="sw all" style=${{ background: "var(--line-strong)" }}>全</span>
                 <span class="nm"><span>全部</span></span>
                 <span class="cnt">${todayCount.all}</span>
               </button>
-              ${s.users.map(u => html`
-                <button key=${u.uid + u.name} class=${"urow" + (filter.user === u.name ? " on" : "")}
-                        title=${u.name + "（今日 " + (todayCount.m[u.name] || 0) + " 条）"} onClick=${() => setUser(u.name)}>
-                  <span class=${"sw" + (!u.color ? " default-bg" : "")} style=${{ background: u.color || "var(--line-strong)" }}>
-                    ${userInitial(u.name)}
-                  </span>
-                  <span class="nm"><span>${u.name}</span>${u.mute && I.mute}${u.check_appends && html`<span class="tag-mini">追加</span>`}</span>
-                  <span class="cnt">${todayCount.m[u.name] || 0}</span>
-                </button>`)}
+              ${!sideGroups && s.users.map(u => userRow(u))}
+              ${sideGroups && sideGroups.map(g => {
+                const cnt = g.users.reduce((n, u) => n + (todayCount.m[u.name] || 0), 0);
+                const folded = groupFold.has(g.name);
+                const on = filter.group === g.name;
+                return html`
+                  <div key=${"g:" + g.name} class=${"ugroup" + (folded ? " folded" : "") + (g.ungrouped ? " ungrouped" : "")}>
+                    <div class=${"grow" + (on ? " on" : "")} style=${g.color ? { "--gc": g.color } : undefined}>
+                      <button class="gfold" title=${folded ? "展开分组" : "收起分组"} onClick=${() => toggleFold(g.name)}>
+                        <span class=${"chev" + (folded ? " closed" : "")}>${I.chev}</span>
+                      </button>
+                      <button class="gmain" title=${(g.ungrouped ? "只看未分组用户" : "只看「" + g.name + "」") + "（今日 " + cnt + " 条）"}
+                              onClick=${() => setGroup(g.name)}>
+                        <span class="gsw">${g.ungrouped ? "·" : userInitial(g.name)}</span>
+                        <span class="nm"><span>${g.ungrouped ? "未分组" : g.name}</span><span class="gn">${g.users.length}</span></span>
+                        <span class="cnt">${cnt}</span>
+                      </button>
+                    </div>
+                    ${!folded && g.users.map(u => userRow(u, true))}
+                    ${!folded && !g.users.length && html`<p class="gempty">还没有成员，在「设置」里给用户选分组</p>`}
+                  </div>`;
+              })}
             </div>
           </div>
           <div class="divider"/>
@@ -1310,7 +1420,7 @@
                             firstUnreadKey=${firstUnreadKey} dividerTime=${dividerTime} onClearDivider=${() => setFirstUnreadKey(null)}
                             stockDict=${stockDict} stockRegex=${stockRegex}/>`)}
             ${s.loaded && !s.items.length && html`<p class="empty">还没有任何动态。</p>`}
-            ${s.loaded && s.items.length > 0 && !filteredShown.length && html`<p class="empty">当前筛选/搜索下没有动态。<button class="link" onClick=${() => { clearSearch(); setFilter({ user: null, kindOff: new Set() }); }}>清除筛选与搜索</button></p>`}
+            ${s.loaded && s.items.length > 0 && !filteredShown.length && html`<p class="empty">当前筛选/搜索下没有动态。<button class="link" onClick=${() => { clearSearch(); setFilter({ user: null, group: null, kindOff: new Set() }); }}>清除筛选与搜索</button></p>`}
           </div>
           ${view === "feed" && (pendingBelow > 0 || !atBottom) && html`
             <button class="fab" title=${pendingBelow > 0 ? pendingBelow + " 条新动态在下面，点击回到最新" : "回到最下方（最新）"} onClick=${() => scrollToBottom(true)}>
@@ -1318,7 +1428,7 @@
             </button>`}
         </main>
 
-        ${drawer && html`<${Drawer} users=${s.users} config=${s.config} sound=${sound} onToggleSound=${setSound} onClose=${() => setDrawer(false)} onSaved=${() => fetchSnapshot(dispatch).catch(() => {})} toast=${toast}/>`}
+        ${drawer && html`<${Drawer} users=${s.users} groups=${s.groups} config=${s.config} sound=${sound} onToggleSound=${setSound} onClose=${() => setDrawer(false)} onSaved=${() => fetchSnapshot(dispatch).catch(() => {})} toast=${toast}/>`}
         ${aiDrawer && html`<${AiDrawer} onClose=${() => setAiDrawer(false)} toast=${toast} onSaved=${() => setAiVersion(v => v + 1)}/>`}
         <${Toast} msg=${msg}/>
         ${s.quit && html`
