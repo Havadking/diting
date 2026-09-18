@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>谛听 · 大盘条视觉稿</title>
+<style>
+  /* 设计 token 与 web/app.css 完全一致（只是把品牌字/等宽字换成系统字，让这份稿子离线也能开） */
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --card-hover: #fbfcfe;
+    --line: #e3e6eb; --line-strong: #cfd4dc;
+    --ink: #1b1f27; --ink-2: #4a5160; --ink-3: #8a91a0;
+    --accent: #1772b4; --accent-soft: #e6f0f9;
+    --stock-red: #d9383a; --stock-red-soft: rgba(217, 56, 58, 0.09);
+    --ok: #1ba784; --ok-soft: rgba(27, 167, 132, 0.10);
+    --warn: #d6a01d; --warn-soft: rgba(214, 160, 29, 0.14);
+    --danger: #ed5126;
+    --shadow: 0 1px 2px rgba(20, 30, 50, .05), 0 4px 14px rgba(20, 30, 50, .05);
+    --k-reply-fg: #1d4ed8; --k-reply-bg: #e9eefb;
+    --font: "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", "Segoe UI", system-ui, sans-serif;
+    --serif: "Noto Serif SC", "Songti SC", "SimSun", serif;
+    --mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+    color-scheme: light;
+  }
+  :root[data-theme="dark"] {
+    --bg: #14171d; --card: #1c2028; --card-hover: #21262f;
+    --line: #2a2f3a; --line-strong: #3a4150;
+    --ink: #e7eaf0; --ink-2: #b2b9c7; --ink-3: #737b8c;
+    --accent: #5aa3e0; --accent-soft: #1d2f42;
+    --stock-red: #f26161; --stock-red-soft: rgba(242, 97, 97, 0.14);
+    --ok: #3fc39e; --ok-soft: rgba(63, 195, 158, 0.14);
+    --warn: #e0b04a; --warn-soft: rgba(224, 176, 74, 0.16);
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.25);
+    --k-reply-fg: #8fb0ff; --k-reply-bg: #1f2a45;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.55 var(--font); }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+
+  /* ===== 视觉稿页面自身的排版（不属于产品） ===== */
+  .doc { max-width: 1280px; margin: 0 auto; padding: 28px 24px 80px; }
+  .doc h1 { font-size: 20px; margin: 0 0 4px; }
+  .doc h2 { font-size: 14px; margin: 36px 0 10px; color: var(--ink-2); letter-spacing: .04em; }
+  .doc p.note { margin: 0 0 18px; color: var(--ink-3); font-size: 13px; }
+  .doc .ctl { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0 18px; }
+  .doc .ctl button { height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--ink-2); font-size: 12.5px; }
+  .doc .ctl button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .frame { container-type: inline-size; border: 1px solid var(--line-strong); border-radius: 10px; overflow: hidden; background: var(--bg); box-shadow: var(--shadow); }
+  .frame.narrow { width: 430px; }
+  .spec { display: grid; grid-template-columns: 160px 1fr; gap: 6px 14px; font-size: 13px; color: var(--ink-2); margin-top: 10px; }
+  .spec b { color: var(--ink); font-weight: 500; }
+  .spec code { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+
+  /* ===== 产品：现有布局的简化复刻（顶栏 / 侧栏 / 卡片） ===== */
+  .app { display: grid; grid-template-rows: auto 56px 1fr; grid-template-columns: 56px 1fr; height: 420px; }
+  .topbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 16px; padding: 0 20px; background: var(--card); border-bottom: 1px solid var(--line); }
+  .brand-mark { font-family: var(--serif); font-weight: 700; font-size: 22px; letter-spacing: .12em; }
+  .status { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px 5px 9px; border-radius: 999px; background: var(--bg); color: var(--ink-2); font-size: 12.5px; white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent); }
+  .status time { font-family: var(--mono); font-size: 12px; color: var(--ink-3); }
+  .search { flex: 0 1 200px; height: 32px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink-3); font-size: 12.5px; display: flex; align-items: center; padding: 0 10px; }
+  .spacer { flex: 1; }
+  .ib { width: 28px; height: 28px; border-radius: 7px; background: var(--bg); }
+  .side { border-right: 1px solid var(--line); background: var(--card); padding: 14px 8px; display: flex; flex-direction: column; gap: 10px; align-items: center; }
+  .side .av { width: 32px; height: 32px; border-radius: 9px; background: var(--bg); border: 1px solid var(--line); }
+  .main { overflow: hidden; padding: 14px 28px; }
+  .card { display: grid; grid-template-columns: 4px 1fr; background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); margin-bottom: 8px; overflow: hidden; }
+  .card .stripe { background: var(--uc); }
+  .card .body { padding: 11px 16px 12px 14px; }
+  .card .head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .uname { font-weight: 600; color: var(--uc); }
+  .pill { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11.5px; font-weight: 500; background: var(--k-reply-bg); color: var(--k-reply-fg); }
+  .bar { color: var(--ink-2); font-size: 13px; }
+  .bar::before { content: "· "; color: var(--ink-3); }
+  .card .t { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--ink-3); }
+
+  /* ===================================================================
+     产品：大盘条 .mkt —— 这一段就是将来要搬进 web/app.css 的样式
+     =================================================================== */
+  .mkt {
+    grid-column: 1 / -1;
+    display: flex; align-items: center; gap: 0;
+    height: 30px; padding: 0 12px 0 20px;
+    background: var(--card); border-bottom: 1px solid var(--line);
+    font-size: 12.5px; color: var(--ink-2); white-space: nowrap; overflow: hidden;
+    font-variant-numeric: tabular-nums;
+  }
+  .mkt .seg { display: inline-flex; align-items: center; gap: 6px; padding: 0 12px; height: 100%; border-right: 1px solid var(--line); flex-shrink: 0; }
+  .mkt .seg:first-child { padding-left: 0; }
+  .mkt .seg.grow { flex: 1; border-right: 0; min-width: 0; overflow: hidden; }
+  .mkt .seg.tail { border-right: 0; padding-right: 0; margin-left: auto; gap: 4px; }
+
+  /* 交易时段状态 */
+  .mkt .phase { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-3); }
+  .mkt .phase .dot { width: 7px; height: 7px; box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--ok) 22%, transparent); }
+  .mkt .phase .dot.off { background: var(--ink-3); box-shadow: none; }
+  .mkt .phase .dot.pre { background: var(--warn); box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--warn) 25%, transparent); }
+
+  /* 指数：名称 + 点位 + 涨跌幅；红涨绿跌 */
+  .mkt .idx { display: inline-flex; align-items: baseline; gap: 6px; }
+  .mkt .idx .nm { color: var(--ink-3); font-size: 12px; }
+  .mkt .idx .px { font-family: var(--mono); font-size: 13px; color: var(--ink); font-weight: 500; }
+  .mkt .idx .chg { font-family: var(--mono); font-size: 12px; }
+  .mkt .up .px, .mkt .up .chg { color: var(--stock-red); }
+  .mkt .dn .px, .mkt .dn .chg { color: var(--ok); }
+  .mkt .flat .chg { color: var(--ink-3); }
+
+  /* 成交额与量比 */
+  .mkt .amt .lb { color: var(--ink-3); font-size: 12px; }
+  .mkt .amt .v { font-family: var(--mono); font-size: 13px; color: var(--ink); font-weight: 500; }
+  .mkt .amt .unit { font-size: 11.5px; color: var(--ink-2); margin-left: 1px; }
+  .mkt .vol { display: inline-flex; align-items: center; gap: 7px; }
+  .mkt .vol .tag {
+    display: inline-flex; align-items: center; gap: 3px; height: 18px; padding: 0 7px; border-radius: 5px;
+    font-size: 11.5px; font-weight: 600; letter-spacing: .02em;
+  }
+  .mkt .vol .tag.more { background: var(--warn-soft); color: color-mix(in srgb, var(--warn) 70%, var(--ink)); }
+  .mkt .vol .tag.less { background: var(--bg); color: var(--ink-3); border: 1px solid var(--line); }
+  .mkt .vol .d { font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
+  .mkt .vol .vs { font-size: 11.5px; color: var(--ink-3); }
+  /* 迷你双柱：今日 vs 昨日同时段（宽度按比例，长的那根撑满 44px） */
+  .mkt .bars { display: inline-flex; flex-direction: column; gap: 2px; width: 44px; }
+  .mkt .bars i { display: block; height: 4px; border-radius: 2px; background: var(--line-strong); }
+  .mkt .bars i.today { background: var(--accent); }
+
+  /* 尾部：刷新时间 + 折叠 */
+  .mkt .tail time { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); }
+  .mkt .tail .xbtn { width: 22px; height: 22px; border-radius: 6px; color: var(--ink-3); display: inline-flex; align-items: center; justify-content: center; }
+  .mkt .tail .xbtn:hover { background: var(--bg); color: var(--ink); }
+  .mkt .tail .xbtn svg { width: 13px; height: 13px; }
+
+  /* 失败 / 闭市 */
+  .mkt .muted { color: var(--ink-3); }
+  .mkt .err { color: var(--danger); font-size: 12px; }
+  .mkt.stale .idx .px, .mkt.stale .idx .chg, .mkt.stale .amt .v { opacity: .55; }
+
+  /* 响应式：按容器宽度逐级减信息，优先级 = 信息价值倒序
+     ≤1150px（对应现有顶栏第一档断点）：去掉沪深300、「vs 昨日同时段」文字、迷你柱
+     ≤900px（竖屏副屏）：再去掉点位、刷新时间、阶段文字、「两市」标签——只剩涨跌幅 + 成交额 + 放/缩量
+     ≤480px（手机竖屏）：再去掉成交额和 ✕ */
+  @container (max-width: 1150px) {
+    .mkt .idx.hide-n, .mkt .vol .vs, .mkt .vol .bars { display: none; }
+  }
+  @container (max-width: 900px) {
+    .mkt { padding: 0 10px 0 12px; }
+    .mkt .seg { padding: 0 8px; }
+    .mkt .idx .px, .mkt .tail time, .mkt .phase .ph-lbl, .mkt .amt .lb { display: none; }
+    .topbar { padding: 0 12px; gap: 10px; }
+    .search { display: none; }
+  }
+  /* ≤480px（手机竖屏）：连成交额和 ✕ 都让位，只剩三大指数涨跌幅 + 放/缩量标签（✕ 的功能仍在「⋯」菜单里） */
+  @container (max-width: 480px) {
+    .mkt .seg { padding: 0 6px; }
+    .mkt .amt, .mkt .tail .xbtn { display: none; }
+  }
+  .brand-mark { white-space: nowrap; }
+
+  .doc .states { display: grid; gap: 10px; }
+  .doc .states .frame { height: auto; }
+  .doc .states .frame .mkt { grid-column: auto; }
+  .doc .cap { font-size: 12px; color: var(--ink-3); margin: 0 0 4px; }
+</style>
+</head>
+<body>
+<div class="doc">
+  <h1>大盘条（Market Strip）视觉稿</h1>
+  <p class="note">放在顶栏之上、贯通整个页面宽度的 30px 长条。三大指数 + 两市成交额 + 相对昨日同时段的放量/缩量。数据由后端 <code>/api/market</code> 代理东财行情接口，浏览器仍只请求 127.0.0.1。</p>
+  <div class="ctl">
+    <button id="t-light" class="on" onclick="setTheme('light')">浅色</button>
+    <button id="t-dark" onclick="setTheme('dark')">深色</button>
+  </div>
+
+  <h2>① 主视图 · 盘中放量</h2>
+  <div class="frame">
+    <div class="app">
+      <div class="mkt" id="mkt-main"></div>
+      <header class="topbar">
+        <span class="ib"></span><span class="brand-mark">谛听</span>
+        <span class="status"><span class="dot"></span>运行中 · 上次检查 <time>16:35:39</time></span>
+        <span class="search">搜索关键词、股票或博主... (/)</span>
+        <span class="spacer"></span>
+        <span class="ib"></span><span class="ib"></span><span class="ib"></span><span class="ib"></span><span class="ib"></span>
+      </header>
+      <aside class="side"><span class="av"></span><span class="av"></span><span class="av"></span><span class="av"></span></aside>
+      <main class="main">
+        <div class="card" style="--uc:#e07f3c"><span class="stripe"></span><div class="body">
+          <div class="head"><span class="uname">富贵经纶小阿宝</span><span class="pill">评论</span><span class="bar">C沈数吧</span><span class="t">15:59</span></div>无语</div></div>
+        <div class="card" style="--uc:#d9383a"><span class="stripe"></span><div class="body">
+          <div class="head"><span class="uname">女大炒股暴富</span><span class="pill">评论</span><span class="bar">C沈数吧</span><span class="t">15:59</span></div>我现在就一个莲花一个华胜，随便吧[笑哭]守住月盈利20个点我就满足了！</div></div>
+        <div class="card" style="--uc:#e07f3c"><span class="stripe"></span><div class="body">
+          <div class="head"><span class="uname">月月小仙女</span><span class="pill">评论</span><span class="bar">太极实业吧</span><span class="t">16:30</span></div>赚这么多，打死你[大哭]</div></div>
+      </main>
+    </div>
+  </div>
+  <div class="spec">
+    <b>位置 / 尺寸</b><span><code>.app</code> 网格新增第一行 <code>auto</code>（30px），条本身 <code>grid-column: 1 / -1</code>；折叠后该行高 0，布局回到现状</span>
+    <b>刷新节奏</b><span>盘中（9:15–11:30、13:00–15:00）每 <code>10s</code> 拉一次实时行情；5 分钟 K 线每 <code>60s</code> 拉一次算「昨日同时段」；闭市后只在页面打开时拉一次，之后不再请求</span>
+    <b>颜色语义</b><span>指数红涨绿跌（沿用 <code>--stock-red</code> / <code>--ok</code>）；放量用琥珀色 pill（<code>--warn</code>），缩量用灰色描边 pill——放/缩量本身不分好坏，所以刻意不用红绿</span>
+    <b>量比口径</b><span>沪市 + 深市成交额之和；「昨日同时段」= 昨天 5 分钟 K 线累加到当前分钟；差值 ≥ +10% 标「放量」、≤ −10% 标「缩量」，中间标「持平」</span>
+    <b>折叠</b><span>右侧 ✕ 收起，状态存 <code>localStorage diting.market</code>；收起后在顶栏「⋯」菜单里有「显示大盘」可恢复</span>
+  </div>
+
+  <h2>② 各状态</h2>
+  <div class="states">
+    <p class="cap">盘中 · 缩量</p>
+    <div class="frame"><div class="mkt" id="mkt-less"></div></div>
+    <p class="cap">盘中 · 持平（±10% 以内不打标签，只显示数字）</p>
+    <div class="frame"><div class="mkt" id="mkt-flat"></div></div>
+    <p class="cap">集合竞价（9:15–9:25）：指数有价、成交额还很小，量比不算，只提示阶段</p>
+    <div class="frame"><div class="mkt" id="mkt-pre"></div></div>
+    <p class="cap">已收盘：显示收盘数据，量比改为「全天 vs 昨日全天」；数字略淡表示不再更新</p>
+    <div class="frame"><div class="mkt stale" id="mkt-closed"></div></div>
+    <p class="cap">非交易日 / 周末</p>
+    <div class="frame"><div class="mkt stale" id="mkt-holiday"></div></div>
+    <p class="cap">接口失败：保留上次数据（淡化）+ 一句错误，不弹窗、不影响动态列表</p>
+    <div class="frame"><div class="mkt stale" id="mkt-err"></div></div>
+  </div>
+
+  <h2>③ 窄屏（手机竖屏副屏，≤ 480px）</h2>
+  <p class="note">只保留三大指数涨跌幅 + 放/缩量标签；≤ 900px 的竖屏平板还能多留一个成交额（见上面各状态在窄容器下的样子）。</p>
+  <div class="frame narrow">
+    <div class="app" style="height: 150px; grid-template-columns: 1fr;">
+      <div class="mkt" id="mkt-narrow"></div>
+      <header class="topbar">
+        <span class="ib"></span><span class="brand-mark">谛听</span>
+        <span class="status"><span class="dot"></span><time>16:35</time></span>
+        <span class="spacer"></span>
+        <span class="ib"></span><span class="ib"></span><span class="ib"></span>
+      </header>
+      <main class="main" style="padding: 12px 14px;">
+        <div class="card" style="--uc:#d9383a"><span class="stripe"></span><div class="body">
+          <div class="head"><span class="uname">女大炒股暴富</span><span class="pill">评论</span><span class="t">15:59</span></div>随便吧[笑哭]</div></div>
+      </main>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ---- 渲染：数据形状即将来 /api/market 的返回，前端只做格式化 ----
+  const I = { x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>' };
+  const PHASE = {
+    pre:     { cls: 'pre', lbl: '集合竞价' },
+    open:    { cls: '',    lbl: '盘中' },
+    lunch:   { cls: 'off', lbl: '午间休市' },
+    closed:  { cls: 'off', lbl: '已收盘' },
+    holiday: { cls: 'off', lbl: '休市' },
+  };
+  function fmtPct(p) { const s = p > 0 ? '+' : ''; return s + p.toFixed(2) + '%'; }
+  function fmtAmt(yi) { return yi >= 10000 ? (yi / 10000).toFixed(2) + '<span class="unit">万亿</span>' : Math.round(yi) + '<span class="unit">亿</span>'; }
+  function idx(o, hide) {
+    const cls = o.chg > 0 ? 'up' : o.chg < 0 ? 'dn' : 'flat';
+    return `<span class="idx ${cls}${hide ? ' hide-n' : ''}"><span class="nm">${o.nm}</span><span class="px">${o.px.toFixed(2)}</span><span class="chg">${fmtPct(o.chg)}</span></span>`;
+  }
+  function render(el, d) {
+    const ph = PHASE[d.phase];
+    const parts = [];
+    parts.push(`<span class="seg"><span class="phase"><span class="dot ${ph.cls}"></span><span class="ph-lbl">${ph.lbl}</span></span></span>`);
+    parts.push(`<span class="seg">${d.idx.map((o, i) => idx(o, i >= 3)).join('<span style="width:10px"></span>')}</span>`);
+    if (d.amt != null) {
+      parts.push(`<span class="seg amt"><span class="lb">两市</span><span class="v">${fmtAmt(d.amt)}</span></span>`);
+    }
+    if (d.vol) {
+      const { ratio, tag, vs } = d.vol;              // ratio: 今日/昨日同时段 - 1
+      const t = tag === 'more' ? '<span class="tag more">▲ 放量</span>' : tag === 'less' ? '<span class="tag less">▼ 缩量</span>' : '';
+      const a = Math.max(0, 1 + ratio), w1 = a >= 1 ? 100 : a * 100, w2 = a >= 1 ? 100 / a : 100;
+      parts.push(`<span class="seg vol">${t}<span class="d">${fmtPct(ratio * 100)}</span><span class="vs">${vs}</span><span class="bars"><i class="today" style="width:${w1}%"></i><i style="width:${w2}%"></i></span></span>`);
+    } else if (d.volNote) {
+      parts.push(`<span class="seg vol"><span class="muted">${d.volNote}</span></span>`);
+    }
+    if (d.err) parts.push(`<span class="seg"><span class="err">${d.err}</span></span>`);
+    parts.push(`<span class="seg grow"></span>`);
+    parts.push(`<span class="seg tail"><time>${d.at}</time><button class="xbtn" title="收起大盘条">${I.x}</button></span>`);
+    el.innerHTML = parts.join('');
+  }
+
+  const IDX = [
+    { nm: '上证', px: 3911.87, chg: 0.94 },
+    { nm: '深成', px: 13640.87, chg: 1.72 },
+    { nm: '创业板', px: 3372.68, chg: 2.25 },
+    { nm: '沪深300', px: 4507.39, chg: 1.06 },
+  ];
+  const IDX_DN = [
+    { nm: '上证', px: 3861.75, chg: -0.77 },
+    { nm: '深成', px: 13409.91, chg: -1.13 },
+    { nm: '创业板', px: 3298.31, chg: -1.60 },
+    { nm: '沪深300', px: 4460.16, chg: -0.72 },
+  ];
+  render(document.getElementById('mkt-main'),    { phase: 'open', idx: IDX, amt: 14620, vol: { ratio: 0.124, tag: 'more', vs: 'vs 昨日同时段' }, at: '14:07:30 刷新' });
+  render(document.getElementById('mkt-less'),    { phase: 'open', idx: IDX_DN, amt: 11830, vol: { ratio: -0.183, tag: 'less', vs: 'vs 昨日同时段' }, at: '10:42:10 刷新' });
+  render(document.getElementById('mkt-flat'),    { phase: 'open', idx: [{ nm: '上证', px: 3877.12, chg: 0.04 }, { nm: '深成', px: 13560.20, chg: -0.03 }, { nm: '创业板', px: 3351.90, chg: 0.01 }, { nm: '沪深300', px: 4491.03, chg: 0.00 }], amt: 9310, vol: { ratio: 0.031, tag: 'flat', vs: 'vs 昨日同时段' }, at: '09:58:20 刷新' });
+  render(document.getElementById('mkt-pre'),     { phase: 'pre', idx: [{ nm: '上证', px: 3891.96, chg: 0.42 }, { nm: '深成', px: 13563.74, chg: 1.15 }, { nm: '创业板', px: 3351.56, chg: 1.61 }, { nm: '沪深300', px: 4492.32, chg: 0.72 }], amt: 128, volNote: '开盘后开始比较成交量', at: '09:21:00 刷新' });
+  render(document.getElementById('mkt-closed'),  { phase: 'closed', idx: IDX, amt: 20770, vol: { ratio: 0.196, tag: 'more', vs: 'vs 昨日全天' }, at: '15:00 收盘' });
+  render(document.getElementById('mkt-holiday'), { phase: 'holiday', idx: IDX, amt: 20770, vol: { ratio: 0.196, tag: 'more', vs: '09-18 全天 vs 前一日' }, at: '09-18 收盘' });
+  render(document.getElementById('mkt-err'),     { phase: 'open', idx: IDX, amt: 14620, vol: { ratio: 0.124, tag: 'more', vs: 'vs 昨日同时段' }, err: '行情接口 3 次超时，30 秒后重试', at: '14:07:30 刷新' });
+  render(document.getElementById('mkt-narrow'),  { phase: 'open', idx: IDX, amt: 14620, vol: { ratio: 0.124, tag: 'more', vs: 'vs 昨日同时段' }, at: '14:07:30 刷新' });
+
+  function setTheme(t) {
+    document.documentElement.setAttribute('data-theme', t);
+    document.getElementById('t-light').classList.toggle('on', t === 'light');
+    document.getElementById('t-dark').classList.toggle('on', t === 'dark');
+  }
+</script>
+</body>
+</html>

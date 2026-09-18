@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-先读 `docs/onboarding-notes.md`（项目认知笔记：架构全貌、跨文件契约、线程/SQLite 归属、已知债务、改动前检查清单），再按需查阅 `docs/web-design.md`（网页版设计）、`docs/v2-design.md`（v2 功能规划）与 `docs/gap-and-roadmap.md`（不足盘点与后续开发方向）。
+先读 `docs/onboarding-notes.md`（项目认知笔记：架构全貌、跨文件契约、线程/SQLite 归属、已知债务、改动前检查清单），再按需查阅 `docs/web-design.md`（网页版设计）、`docs/v2-design.md`（v2 功能规划）、`docs/gap-and-roadmap.md`（不足盘点与后续开发方向）与 `docs/market-strip-design.md`（顶部大盘条设计稿，未实现）。
 
 「谛听」：本地运行的 Windows 小工具，轮询监控指定用户在**东方财富股吧 / 推特(X) / 微博**上的新动态，弹 Windows 系统通知并显示在列表里。界面是本机 HTTP 服务 + 浏览器页面（`server.py` + `web/`），旧的 tkinter 窗口版（`app.py`）暂时保留。纯 Python 标准库 + 可选 `winotify`，前端 React + htm 全部本地 vendor、零构建，无第三方推送服务依赖。
 
