@@ -25,6 +25,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
+import market as market_mod
 import summary as summary_mod
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -63,7 +64,8 @@ def _int_arg(qs, name, default, lo, hi):
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "diting/0.1"
-    core = None  # 由 main() 注入
+    core = None    # 由 main() 注入
+    market = None  # 大盘条数据源（market.MarketFeed），与 core 独立，也由 main() 注入
 
     # ---- 工具 ----
     def _send_json(self, obj, status=HTTPStatus.OK):
@@ -333,7 +335,9 @@ class Handler(BaseHTTPRequestHandler):
     # ---- API ----
     def _api_snapshot(self, qs):
         limit = _int_arg(qs, "limit", 300, 1, 5000)
-        self._send_json(self.core.snapshot(limit))
+        snap = self.core.snapshot(limit)
+        snap["market"] = self.market.latest if self.market else None
+        self._send_json(snap)
 
     def _api_items(self, qs):
         """「加载更早」翻页。游标是 (before, before_key)，缺 before_key 时给个比所有 key 都大的哨兵。"""
@@ -365,8 +369,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("X-Accel-Buffering", "no")
             self.send_header("Connection", "keep-alive")
             self.end_headers()
-            # 连上先给一条当前状态，前端不用等下一轮
+            # 连上先给一条当前状态，前端不用等下一轮；大盘条同理（它最长半小时才刷一次）
             self._sse_write("status", core._status_payload())
+            if self.market and self.market.latest:
+                self._sse_write("market", self.market.latest)
             while True:
                 try:
                     etype, payload = q.get(timeout=SSE_PING_SECONDS)
@@ -441,10 +447,13 @@ def main():
     if args.mock:
         import mock_data
         core = mock_data.MockCore(interval=args.mock_interval)
+        feed = market_mod.MockMarketFeed(core._broadcast)
     else:
         import core as core_mod
         core = core_mod.MonitorCore()
+        feed = market_mod.MarketFeed(core._broadcast)
     Handler.core = core
+    Handler.market = feed
 
     httpd, port = bind_server(args.port, host=args.host)
     url = "http://127.0.0.1:%d" % port
@@ -453,6 +462,8 @@ def main():
     if err:
         core.set_status(err.replace("\n", " "))
         print("监控未启动：%s" % err.replace("\n", " "), file=sys.stderr)
+
+    feed.start()   # 大盘条不依赖监控是否启动
 
     print("谛听 网页版已启动：%s%s" % (url, "（--mock 演示模式）" if args.mock else ""))
     if args.host != "127.0.0.1":
@@ -469,6 +480,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        feed.stop()
         core.stop()
         httpd.server_close()
 

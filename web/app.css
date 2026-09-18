@@ -31,7 +31,7 @@
     --stock-red: #d9383a;   /* A 股看盘大涨红 / 吉祥朱红 */
     --stock-red-soft: rgba(217, 56, 58, 0.09);
     --ok: #1ba784;          /* 竹绿 */
-    --warn: #d6a01d;
+    --warn: #d6a01d;        --warn-soft: rgba(214, 160, 29, 0.14);
     --danger: #ed5126;      /* 朱红 */
     --sel: #dbeafe;
     --new-glow: #fff6d9;
@@ -56,6 +56,7 @@
       --accent: #5aa3e0; --accent-soft: #1d2f42;
       --stock-red: #f26161; --stock-red-soft: rgba(242, 97, 97, 0.14);
       --ok: #3fc39e; --sel: #243b55; --new-glow: #3a3320;
+      --warn: #e0b04a; --warn-soft: rgba(224, 176, 74, 0.16);
       --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.25);
       --shadow-lg: 0 8px 30px rgba(0,0,0,.5);
       --k-post-fg: #4fd39c; --k-post-bg: #17352a;
@@ -72,6 +73,7 @@
     --accent: #5aa3e0; --accent-soft: #1d2f42;
     --stock-red: #f26161; --stock-red-soft: rgba(242, 97, 97, 0.14);
     --ok: #3fc39e; --sel: #243b55; --new-glow: #3a3320;
+    --warn: #e0b04a; --warn-soft: rgba(224, 176, 74, 0.16);
     --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.25);
     --shadow-lg: 0 8px 30px rgba(0,0,0,.5);
     --k-post-fg: #4fd39c; --k-post-bg: #17352a;
@@ -92,6 +94,7 @@
 
   #root { height: 100%; }
   .app { display: grid; grid-template-rows: 56px 1fr; grid-template-columns: 232px 1fr; height: 100vh; transition: grid-template-columns .18s ease; }
+  .app.with-mkt { grid-template-rows: 30px 56px 1fr; }   /* 大盘条显示时在顶栏之上多一行 */
   .app.rail { grid-template-columns: 56px 1fr; }
 
   /* ---------- 顶栏 ---------- */
@@ -158,6 +161,72 @@
     .only-wide { display: none !important; }
     .only-narrow { display: inline-flex; }
     .status .lbl { display: none; }
+  }
+
+  /* ---------- 大盘条（顶栏之上的 30px 长条，见 docs/market-strip-design.md） ---------- */
+  .mkt {
+    grid-column: 1 / -1; display: flex; align-items: center;
+    height: 30px; padding: 0 12px 0 20px;
+    background: var(--card); border-bottom: 1px solid var(--line);
+    font-size: 12.5px; color: var(--ink-2); white-space: nowrap; overflow: hidden;
+    font-variant-numeric: tabular-nums;
+  }
+  .mkt .seg { display: inline-flex; align-items: center; gap: 6px; padding: 0 12px; height: 100%; border-right: 1px solid var(--line); flex-shrink: 0; }
+  .mkt .seg:first-child { padding-left: 0; }
+  .mkt .seg.grow { flex: 1; border-right: 0; min-width: 0; }
+  .mkt .seg.tail { border-right: 0; padding-right: 0; margin-left: auto; gap: 4px; }
+  /* 交易时段 */
+  .mkt .phase { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-3); }
+  .mkt .phase .dot { width: 7px; height: 7px; box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--ok) 22%, transparent); }
+  .mkt .phase .dot.off { background: var(--ink-3); box-shadow: none; }
+  .mkt .phase .dot.pre { background: var(--warn); box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--warn) 25%, transparent); }
+  /* 指数：名称 + 点位 + 涨跌幅；红涨绿跌 */
+  .mkt .idx { display: inline-flex; align-items: baseline; gap: 6px; }
+  .mkt .idx + .idx { margin-left: 10px; }
+  .mkt .idx .nm { color: var(--ink-3); font-size: 12px; }
+  .mkt .idx .px { font-family: var(--mono); font-size: 13px; color: var(--ink); font-weight: 500; }
+  .mkt .idx .chg { font-family: var(--mono); font-size: 12px; }
+  .mkt .up .px, .mkt .up .chg { color: var(--stock-red); }
+  .mkt .dn .px, .mkt .dn .chg { color: var(--ok); }
+  .mkt .flat .chg { color: var(--ink-3); }
+  /* 成交额与量比 */
+  .mkt .amt .lb { color: var(--ink-3); font-size: 12px; }
+  .mkt .amt .v { font-family: var(--mono); font-size: 13px; color: var(--ink); font-weight: 500; }
+  .mkt .amt .unit { font-family: var(--font); font-size: 11.5px; font-weight: 400; color: var(--ink-2); margin-left: 1px; }
+  .mkt .vol { gap: 7px; }
+  .mkt .vol .tag { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 5px; font-size: 11.5px; font-weight: 600; letter-spacing: .02em; }
+  .mkt .vol .tag.more { background: var(--warn-soft); color: color-mix(in srgb, var(--warn) 70%, var(--ink)); }
+  .mkt .vol .tag.less { background: var(--bg); color: var(--ink-3); border: 1px solid var(--line); }
+  .mkt .vol .d { font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
+  .mkt .vol .vs { font-size: 11.5px; color: var(--ink-3); }
+  /* 迷你双柱：今日 vs 昨日同时段，长的那根撑满 44px */
+  .mkt .bars { display: inline-flex; flex-direction: column; gap: 2px; width: 44px; }
+  .mkt .bars i { display: block; height: 4px; border-radius: 2px; background: var(--line-strong); }
+  .mkt .bars i.today { background: var(--accent); }
+  /* 尾部：刷新时间 + 收起 */
+  .mkt .tail time { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); }
+  .mkt .tail .xbtn { width: 22px; height: 22px; border-radius: 6px; color: var(--ink-3); display: inline-flex; align-items: center; justify-content: center; }
+  .mkt .tail .xbtn:hover { background: var(--bg); color: var(--ink); }
+  .mkt .tail .xbtn svg { width: 13px; height: 13px; }
+  .mkt .muted { color: var(--ink-3); }
+  .mkt .err { color: var(--danger); font-size: 12px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+  /* 收盘 / 休市 / 接口失败：数字淡化表示不再更新 */
+  .mkt.stale .idx .px, .mkt.stale .idx .chg, .mkt.stale .amt .v { opacity: .55; }
+  /* 响应式：按信息价值逐级减。断点与顶栏一致。
+     ≤1150px：去掉沪深300、「vs 昨日同时段」文字、迷你柱
+     ≤900px（竖屏副屏）：再去掉点位、刷新时间、阶段文字、「两市」标签
+     ≤480px（手机竖屏）：再去掉成交额和 ✕（「⋯」菜单里仍可隐藏） */
+  @media (max-width: 1150px) {
+    .mkt .idx.extra, .mkt .vol .vs, .mkt .vol .bars { display: none; }
+  }
+  @media (max-width: 900px) {
+    .mkt { padding: 0 10px 0 12px; }
+    .mkt .seg { padding: 0 8px; }
+    .mkt .idx .px, .mkt .tail time, .mkt .phase .ph-lbl, .mkt .amt .lb { display: none; }
+  }
+  @media (max-width: 480px) {
+    .mkt .seg { padding: 0 6px; }
+    .mkt .amt, .mkt .tail .xbtn { display: none; }
   }
 
   /* ---------- 侧栏 ---------- */

@@ -15,6 +15,7 @@
 !/server.py
 !/mock_data.py
 !/summary.py
+!/market.py
 !/web/
 !/monitor.py
 !/test_once.py

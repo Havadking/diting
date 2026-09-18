@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-先读 `docs/onboarding-notes.md`（项目认知笔记：架构全貌、跨文件契约、线程/SQLite 归属、已知债务、改动前检查清单），再按需查阅 `docs/web-design.md`（网页版设计）、`docs/v2-design.md`（v2 功能规划）、`docs/gap-and-roadmap.md`（不足盘点与后续开发方向）与 `docs/market-strip-design.md`（顶部大盘条设计稿，未实现）。
+先读 `docs/onboarding-notes.md`（项目认知笔记：架构全貌、跨文件契约、线程/SQLite 归属、已知债务、改动前检查清单），再按需查阅 `docs/web-design.md`（网页版设计）、`docs/v2-design.md`（v2 功能规划）、`docs/gap-and-roadmap.md`（不足盘点与后续开发方向）与 `docs/market-strip-design.md`（顶部大盘条：数据源、口径与事件契约）。
 
 「谛听」：本地运行的 Windows 小工具，轮询监控指定用户在**东方财富股吧 / 推特(X) / 微博**上的新动态，弹 Windows 系统通知并显示在列表里。界面是本机 HTTP 服务 + 浏览器页面（`server.py` + `web/`），旧的 tkinter 窗口版（`app.py`）暂时保留。纯 Python 标准库 + 可选 `winotify`，前端 React + htm 全部本地 vendor、零构建，无第三方推送服务依赖。
 
@@ -25,8 +25,8 @@ python test_once.py              # 抓取自检：打印 config.json 里第一�
 没有构建步骤、没有 lint 配置、**没有测试框架**。验证改动的手段：
 
 ```bash
-python -c "import py_compile; [py_compile.compile(f, doraise=True) for f in ('server.py','core.py','app.py','monitor.py','mock_data.py','summary.py')]"   # 语法检查
-python -m pyflakes server.py core.py app.py monitor.py mock_data.py summary.py    # 未用导入/未定义名字（pip install pyflakes）
+python -c "import py_compile; [py_compile.compile(f, doraise=True) for f in ('server.py','core.py','app.py','monitor.py','mock_data.py','summary.py','market.py')]"   # 语法检查
+python -m pyflakes server.py core.py app.py monitor.py mock_data.py summary.py market.py    # 未用导入/未定义名字（pip install pyflakes）
 node -e "new Function(require('fs').readFileSync('web/app.js','utf8'))"  # 前端 JS 语法检查（有 node 的话）
 ```
 
@@ -37,7 +37,7 @@ node -e "new Function(require('fs').readFileSync('web/app.js','utf8'))"  # 前�
 `python server.py --mock --no-browser` 起来后，后端用 `curl 127.0.0.1:17777/api/snapshot` / `curl -N 127.0.0.1:17777/api/events` 看；前端直接开浏览器。
 `--mock-interval 2` 可以把随机推送加快到 2 秒一条。mock 数据在 `mock_data.py`，`MockCore` 继承 `MonitorCore` 只换掉数据源，订阅/广播/接口和真的一模一样。
 
-浏览器 DevTools Network 面板里除了 `127.0.0.1` 不该有任何外部请求——离线可用是硬性要求（AI 日报是唯一例外，且只在点「生成」时由后端发请求）。
+浏览器 DevTools Network 面板里除了 `127.0.0.1` 不该有任何外部请求——离线可用是硬性要求（AI 日报和大盘条是仅有的例外，且都是后端发请求：AI 只在点「生成」时，大盘条由 `market.py` 线程按交易阶段轮询，`--mock` 下不联网）。
 
 验证 AI 日报不用真 key：起一个假的 OpenAI 兼容接口（收到 `POST /chat/completions` 就回固定 Markdown 的几十行 `BaseHTTPRequestHandler`），在页面「AI 设置」里把接口地址指到它；mock 模式下 AI 配置和日报缓存都在内存里，不会污染 `config.json`。
 
@@ -68,6 +68,7 @@ appmod.MonitorApp.start = lambda self, silent=False: None   # 跳过联网监控
 - **`server.py` + `web/`** — 网页版，主要维护对象。`server.py` 是纯标准库 `ThreadingHTTPServer`，默认只绑 `127.0.0.1`（`--host 0.0.0.0` 开放局域网给平板/手机看），接口见 `docs/web-design.md` §5；`web/app.js` 是 React 18 + htm 写的单文件前端（htm 是标签模板函数，写法 `` html`<div class=${x}>` ``，不需要 JSX 编译）。所有 `POST` 校验 `Origin` 必须等于自己（拿 `Host` 头比，不是写死 127.0.0.1，所以局域网地址访问也能过），别去掉——这是防止别的网页 fetch 本地端口让程序退出的唯一防线。
 - **`app.py`** — 旧版 tkinter 窗口，只是 `MonitorCore` 的另一层壳：`subscribe()` 一个队列，消费事件画 Treeview。稳定后会删，**不要再往里加功能**。
 - **`summary.py`** — AI 日报：把某人某天的动态预处理、拼提示词、调 OpenAI 兼容接口（DeepSeek 等）。纯函数模块，不碰 core/线程/SQLite；`server.py` 的 `/api/ai/*` 编排它，缓存表 `summaries` 建在 `monitor.get_db()` 里，`MockCore` 覆写成内存版。`config.json` 的 `ai.profiles[].api_key` 明文只在后端，接口只回脱敏 `key_hint`。详见 `docs/onboarding-notes.md` §8.1。
+- **`market.py`** — 顶部大盘条：三大指数 + 两市成交额 + 相对昨日同时段的放量/缩量。纯函数（抓腾讯行情、算阶段与量比）+ `MarketFeed` 独立 daemon 线程，`server.py` 的 `main()` 创建、用 `core._broadcast` 发 `("market", payload)` 事件，**与股吧监控的启停无关**；`MockMarketFeed` 只换掉三个 `_fetch_*`。口径与契约见 `docs/market-strip-design.md`。
 - **`monitor.py`** — 双重身份：① 被 `core.py` import 的抓取/解析核心；② 独立的命令行推送版（`main()`）。注意 **`monitor.py` 的命令行 `main()` 只处理股吧用户**，推特/微博是 GUI 独有的。改抓取逻辑时两边都受影响，改轮询逻辑时通常只动 `core.py`。
 
 `core.py` 顶部的 `ENABLE_TWITTER` / `ENABLE_WEIBO` 目前是 `False`——推特/微博功能暂时下线（不轮询、UI 也不提），但代码和 `monitor.py` 里的抓取逻辑都完整保留，改成 `True` 即可恢复。改任何"用户列表"相关的地方（`core.py` 的 `_run_loop`/`describe_config`/`list_users`/`save_users`、`app.py` `open_colors` 的 `rows`/`editable_users`）时留意这两个开关，别让隐藏的来源重新泄漏到 UI，也别让保存逻辑遍历到没渲染出来的用户而误清空他们的配置。`list_users()` 和 `save_users()` 用同一份"启用来源"列表就是为了这个。
@@ -119,7 +120,7 @@ key, kind, icon, time, title, content, bar, ctx_user, ctx_text, link
 
 ### 线程模型
 
-`core.py` 单后台线程 `_run_loop()` 轮询，处理完的条目（已入 `core.items`、已写库、已弹通知）通过 `_broadcast()` 推给所有订阅者队列（`subscribe()` 拿，满 200 条丢最旧的，别让挂死的浏览器 tab 拖住后台线程）。事件形状：`("history"|"new", [entry...])`、`("status", {text, running, last_check})`、`("config", {users})`、`("cleared", {})`。
+`core.py` 单后台线程 `_run_loop()` 轮询，处理完的条目（已入 `core.items`、已写库、已弹通知）通过 `_broadcast()` 推给所有订阅者队列（`subscribe()` 拿，满 200 条丢最旧的，别让挂死的浏览器 tab 拖住后台线程）。事件形状：`("history"|"new", [entry...])`、`("status", {text, running, last_check})`、`("config", {users})`、`("cleared", {})`、`("market", {...})`（大盘条，由 `market.MarketFeed` 线程而非 `_run_loop` 发出）。
 
 - 网页版：每个 SSE 连接（`/api/events`）在自己的 handler 线程里 `subscribe()` 一个队列，`q.get(timeout=25)` 超时就发 `: ping` 保活；断开时 `unsubscribe()` 并把 `close_connection` 置 `True`，否则 handler 会回到 keep-alive 循环在已关的 socket 上读下一个请求、打一屏 traceback。前端 `EventSource` 自己重连，`onopen` 时若不是首次连接就重拉 `/api/snapshot` 合并补漏。
 - tkinter 版：主线程 `_poll_queue()` 每 400ms 消费一次并渲染，**所有 tkinter 调用必须在主线程**。
@@ -173,5 +174,6 @@ commit message 用 conventional commits 格式，说明"为什么"而非"改了�
 - 股吧帖子全文/追加：`gbapi.eastmoney.com/content/api/Post/ArticleContent?postid={post_id}&plat=web&version=200&product=guba`（JSON，`post.post_content` 全文 HTML、`post.post_add_list` 追加，见上方「帖子全文补全与追加检查」）
 - 推特：外部 CLI `twitter user-posts @handle -n 40 --json`（`pipx install twitter-cli`），靠环境变量 `TWITTER_AUTH_TOKEN` / `TWITTER_CT0` 认证。子进程必须带 `_no_window_kwargs()` 隐藏控制台黑框。
 - 微博：`weibo.com/ajax/statuses/mymblog`，Cookie 从 `config.json` 的 `weibo_cookie` 读（至少含 `SUB`）。
+- 大盘行情（腾讯）：实时 `qt.gtimg.cn/q=s_sh000001,...`（GBK、`~` 分隔），5 分钟 K `ifzq.gtimg.cn/appstock/app/kline/mkline?param=sh000001,m5,,100`（只有成交量没有成交额），日 K `ifzq.gtimg.cn/appstock/app/fqkline/get?param=sh000001,day,,,3,qfq`。**别换回东财 push2**：连续请求几十次后会被 TLS 断连封 IP，详见 `docs/market-strip-design.md` §1。
 
 全是非官方接口，随时可能变。抓取失败走 `q.put(("status", ...))` 显示到状态栏，**不要让单个来源的异常中断整个轮询循环**。

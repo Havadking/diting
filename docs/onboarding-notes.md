@@ -7,7 +7,7 @@
 > - [`docs/web-design.md`](web-design.md) —— 网页版的历史设计与分阶段实施记录（已全部完成，仅阶段 7 未做）。
 > - [`docs/v2-design.md`](v2-design.md) —— v2.0 功能规划（P0/P1 已落地，P2 待做）。
 > - [`docs/gap-and-roadmap.md`](gap-and-roadmap.md) —— 不足盘点与后续开发方向（批判性评估 + 路线图 + 明确不建议做的事）。
-> - [`docs/market-strip-design.md`](market-strip-design.md) —— 顶部大盘条（三大指数 + 两市成交额 + 放量/缩量）设计稿，**未实现**；视觉稿 [`market-strip-mock.html`](market-strip-mock.html)。
+> - [`docs/market-strip-design.md`](market-strip-design.md) —— 顶部大盘条（三大指数 + 两市成交额 + 放量/缩量）：数据源、口径、`market` 事件契约；视觉稿 [`market-strip-mock.html`](market-strip-mock.html)。
 > - **本文** —— 系统视角：架构全貌、关键不变量、实现里的「为什么」、以及已知债务。
 >
 > 阅读建议：先看 §1～§3 建立整体印象，再按需要跳到对应章节。§13 是给「准备动手改代码的人」的排错与禁区清单。

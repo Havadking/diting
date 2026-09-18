@@ -55,6 +55,7 @@
     cards: svg('<rect x="4" y="4" width="16" height="6" rx="1.5"/><rect x="4" y="14" width="16" height="6" rx="1.5"/>'),
     search: svg('<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/>'),
     x: svg('<path d="M18 6L6 18M6 6l12 12"/>'),
+    chart: svg('<path d="M3 3v18h18M7 15l4-5 3 3 5-7"/>'),
     volume: svg('<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14"/>'),
     volumeX: svg('<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>'),
   };
@@ -254,7 +255,8 @@
 
   /* ---------- store ---------- */
   const initial = { items: [], keys: new Set(), status: { text: "连接中…", running: false, last_check: "" },
-                    users: [], groups: [], config: {}, connected: false, loaded: false, quit: false, hasMore: false };
+                    users: [], groups: [], config: {}, connected: false, loaded: false, quit: false, hasMore: false,
+                    market: null };   // 大盘条数据，形状见 docs/market-strip-design.md §5；null = 还没收到
   const byTime = (a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : (a.key < b.key ? -1 : 1));
   function mergeItems(items, keys, incoming) {
     let changed = false;
@@ -275,7 +277,7 @@
         const m = s.loaded ? mergeItems(s.items, s.keys, items) : null;
         return { ...s, items: m ? m.items : items, keys: m ? m.keys : new Set(items.map(i => i.key)),
                  status: a.data.status || s.status, users: a.data.users || [], groups: a.data.groups || [],
-                 config: a.data.config || {},
+                 config: a.data.config || {}, market: a.data.market || s.market,
                  loaded: true, hasMore: s.loaded ? s.hasMore : !!a.data.has_more };
       }
       case "append": {
@@ -287,6 +289,7 @@
         return { ...s, ...(m || {}), hasMore: a.hasMore };
       }
       case "status": return { ...s, status: a.status };
+      case "market": return { ...s, market: a.market };
       case "cleared": return { ...s, items: [], keys: new Set(), hasMore: true };
       case "connected": return { ...s, connected: a.value };
       case "config": return { ...s, users: a.users || s.users, groups: a.groups || s.groups };
@@ -858,6 +861,48 @@
   }
 
 
+  /* ---------- 大盘条 ---------- */
+  const PHASE = {
+    pre: { cls: "pre", lbl: "集合竞价" }, open: { cls: "", lbl: "盘中" }, lunch: { cls: "off", lbl: "午间休市" },
+    closed: { cls: "off", lbl: "已收盘" }, holiday: { cls: "off", lbl: "休市" },
+  };
+  const fmtPct = p => (p > 0 ? "+" : "") + p.toFixed(2) + "%";
+  // 成交额：≥1 万亿显示两位小数的万亿，否则取整到亿
+  const fmtAmt = yuan => yuan >= 1e12
+    ? html`${(yuan / 1e12).toFixed(2)}<span class="unit">万亿</span>`
+    : html`${Math.round(yuan / 1e8)}<span class="unit">亿</span>`;
+  function MarketStrip({ data, onHide }) {
+    if (!data) return html`<div class="mkt"><span class="seg"><span class="muted">大盘数据加载中…</span></span></div>`;
+    const ph = PHASE[data.phase] || PHASE.closed;
+    const stale = data.phase === "closed" || data.phase === "holiday" || !!data.err;
+    const vol = data.vol;
+    // 迷你双柱：今日 vs 昨日同时段，长的那根撑满，另一根按比例
+    let w1 = 100, w2 = 100;
+    if (vol) { const a = Math.max(0, 1 + vol.ratio); if (a >= 1) w2 = 100 / a; else w1 = a * 100; }
+    return html`
+      <div class=${"mkt" + (stale ? " stale" : "")} title=${data.trade_date ? "交易日 " + data.trade_date : undefined}>
+        <span class="seg"><span class="phase"><span class=${"dot " + ph.cls}/><span class="ph-lbl">${ph.lbl}</span></span></span>
+        <span class="seg">
+          ${data.idx.map((o, i) => html`<span key=${o.code} class=${"idx " + (o.chg > 0 ? "up" : o.chg < 0 ? "dn" : "flat") + (i >= 3 ? " extra" : "")}>
+            <span class="nm">${o.nm}</span><span class="px">${o.px.toFixed(2)}</span><span class="chg">${fmtPct(o.chg)}</span></span>`)}
+        </span>
+        ${data.amt > 0 && html`<span class="seg amt"><span class="lb">两市</span><span class="v">${fmtAmt(data.amt)}</span></span>`}
+        ${vol ? html`
+          <span class="seg vol" title=${"两市成交量 " + vol.vs + " " + fmtPct(vol.ratio * 100)}>
+            ${vol.tag === "more" && html`<span class="tag more">▲ 放量</span>`}
+            ${vol.tag === "less" && html`<span class="tag less">▼ 缩量</span>`}
+            <span class="d">${fmtPct(vol.ratio * 100)}</span><span class="vs">${vol.vs}</span>
+            <span class="bars"><i class="today" style=${{ width: w1 + "%" }}/><i style=${{ width: w2 + "%" }}/></span>
+          </span>` : data.phase === "pre" ? html`<span class="seg vol"><span class="muted">开盘后开始比较成交量</span></span>` : null}
+        ${data.err && html`<span class="seg"><span class="err" title=${data.err}>${data.err}</span></span>`}
+        <span class="seg grow"/>
+        <span class="seg tail">
+          <time>${data.at}${data.phase === "open" || data.phase === "pre" ? " 刷新" : ""}</time>
+          <button class="xbtn" title="收起大盘条（顶栏图表按钮或「⋯」菜单可恢复）" onClick=${onHide}>${I.x}</button>
+        </span>
+      </div>`;
+  }
+
   function App() {
     const [s, dispatch] = useReducer(reducer, initial);
     const [drawer, setDrawer] = useState(false);
@@ -924,6 +969,8 @@
     });
     const [dense, setDense] = useState(() => store.get("diting.dense", false));
     useEffect(() => store.set("diting.dense", dense), [dense]);
+    const [showMarket, setShowMarket] = useState(() => store.get("diting.market", true));
+    useEffect(() => store.set("diting.market", showMarket), [showMarket]);
     const toggleDense = () => setDense(d => !d);
 
     // 全屏：平板/手机浏览器地址栏收不掉，用 Fullscreen API 兜底。iPad Safari 只认 webkit 前缀，
@@ -1164,6 +1211,7 @@
       on("history", d => dispatch({ type: "append", items: d }));
       on("new", onNew);
       on("status", d => dispatch({ type: "status", status: d }));
+      on("market", d => dispatch({ type: "market", market: d }));
       on("cleared", () => { dispatch({ type: "cleared" }); setPendingBelow(0); });
       on("config", d => dispatch({ type: "config", users: d.users, groups: d.groups }));
       return () => { alive = false; es.close(); };
@@ -1287,7 +1335,8 @@
 
     const st = s.status;
     return html`
-      <div class=${"app" + (rail ? " rail" : "") + (dense ? " dense" : "")}>
+      <div class=${"app" + (rail ? " rail" : "") + (dense ? " dense" : "") + (showMarket ? " with-mkt" : "")}>
+        ${showMarket && html`<${MarketStrip} data=${s.market} onHide=${() => setShowMarket(false)}/>`}
         <header class="topbar">
           <div class="brand">
             <button class="iconbtn" title=${rail ? "展开侧栏" : "收起侧栏"} onClick=${() => setRail(r => !r)}>${I.menu}</button>
@@ -1324,6 +1373,7 @@
             <button class=${"btn quiet only-wide" + (dense ? " active" : "")} title=${dense ? "切到标准卡片模式" : "切到紧凑单行模式"} onClick=${toggleDense}>
               ${dense ? I.cards : I.rows}
             </button>
+            ${!showMarket && html`<button class="btn quiet only-wide" title="显示大盘条" onClick=${() => setShowMarket(true)}>${I.chart}</button>`}
             <button class="btn" title=${st.running ? "停止监控" : "开始监控"} onClick=${act.toggleRun} disabled=${!s.connected}>
               ${st.running ? I.pause : I.play}<span class="lbl">${st.running ? "停止监控" : "开始监控"}</span>
             </button>
@@ -1340,6 +1390,7 @@
                 <div class="menu" onClick=${e => e.stopPropagation()}>
                   <button onClick=${() => { setMenu(false); toggleSound(); }}>${sound ? I.volume : I.volumeX}${sound ? "声音提示：开" : "声音提示：关"}</button>
                   <button onClick=${() => { setMenu(false); toggleDense(); }}>${dense ? I.cards : I.rows}${dense ? "卡片模式" : "紧凑模式"}</button>
+                  <button onClick=${() => { setMenu(false); setShowMarket(v => !v); }}>${I.chart}${showMarket ? "隐藏大盘" : "显示大盘"}</button>
                   <button onClick=${() => { setMenu(false); act.test(); }}>${I.bell}测试通知</button>
                   <button onClick=${() => { setMenu(false); act.clear(); }}>${I.trash}清空列表</button>
                   <button onClick=${() => { setMenu(false); toggleTheme(); }}>${isDarkNow(theme) ? I.sun : I.moon}${isDarkNow(theme) ? "浅色模式" : "深色模式"}</button>
