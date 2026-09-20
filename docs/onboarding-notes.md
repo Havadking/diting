@@ -153,19 +153,25 @@ key, kind, icon, time, title, content, bar, ctx_user, ctx_text, link
 ```python
 def _emit(self, state, skey, name, items, db):
     seen = set(state.get(skey, []))
+    first_ever = skey not in state                   # state.json 里从没见过这个来源
     new_items = [it for it in items if it["key"] not in seen]
     state[skey] = list(dict.fromkeys([it["key"] for it in items] + list(seen)))[:500]
     if skey not in self._seeded:
-        self._seeded.add(skey)                       # 该来源第一次抓成功
+        self._seeded.add(skey)                       # 该来源本次运行第一次抓成功
+        if not first_ever:                           # 只是重启：差集 = 离线期间的积压
+            if new_items:
+                self._handle_new(name, new_items, db, backfill=True)   # 全部入列，合并成一条通知
+            return
         entries = [self._add_item(...) for it in sorted(items, key=time)[-10:]]
-        self._broadcast("history", entries)          # 入列表，但不弹通知
+        self._broadcast("history", entries)          # 真正首次：入列表，但不弹通知
     elif new_items:
         self._handle_new(name, new_items, db)        # 之后的才算「新动态」
 ```
 
 要点：
 
-- **首轮基线不弹通知**：避免启动/新增用户时被历史刷屏。只取最近 10 条入列表。
+- **首轮基线不弹通知**：避免新增用户时被历史刷屏。只取最近 10 条入列表。
+- **重启 ≠ 首次**：`state.json` 里已有这个来源的 key 就走「离线补漏」——用持久化的已见 key 做差集，差集全部入列/写库、广播 `new`、通知合并成一条「离线期间 N 条」。没这一步的话，关机期间的动态要么只补最新 10 条、要么被标成已见后永久丢掉。配合 `_run_loop` 里的翻页：补漏那一轮 `collect_items(seen=..., max_pages=BACKFILL_MAX_PAGES)`，整页都是没见过的 key 就继续翻下一页（发帖 `pagenum` / 评论 `pageindex`），碰到已见 key 或翻满 3 页停；正常轮次仍只拉第 1 页。
 - **按来源分别 seed**（`self._seeded` 是 set 而不是 bool）是**有意为之**：历史上曾用单一全局标志，导致某个来源开机时抓取失败就**永远不显示**（commit `7a3d470`）。每次 `start()` 都会 `self._seeded = set()` 重置。
 - 股吧用户的 skey 是用户 uid，所以**每个股吧用户各自成一路基线**。
 - `monitor.py` 的 `check_user()` 有一套**独立实现**的相同语义（用 `uid not in state` 判首次），两者共享同一个 `state.json`。改语义时两边都要看。
@@ -213,7 +219,7 @@ my_stop = self.stop_event                # 新线程只认这个局部引用
 
 ### 7.1 为什么需要单独做
 
-东方财富允许作者在原帖发布后继续「追加」内容（前端显示成"作者更新以下内容"），但**这部分文字不在列表接口的 `post_content` 里**，只有 `ArticleContent` 接口返回的 `post_add_list` 数组才有。所以要**为每条关心的帖子多发一次请求**。同一个接口也是「全文补全」的数据源：列表接口把超过 200 字的正文截成摘要，`monitor.complete_truncated()` 在新帖入列前用它换成全文（`core._complete_truncated()` 调，首轮基线只补最近 10 条）。以前走帖子详情页抠内嵌 JSON，第一次请求就可能被拦成验证页，已换掉。
+东方财富允许作者在原帖发布后继续「追加」内容（前端显示成"作者更新以下内容"），但**这部分文字不在列表接口的 `post_content` 里**，只有 `ArticleContent` 接口返回的 `post_add_list` 数组才有。所以要**为每条关心的帖子多发一次请求**。同一个接口也是「全文补全」的数据源：列表接口把超过 200 字的正文截成摘要，`monitor.complete_truncated()` 在新帖入列前用它换成全文（`core._complete_truncated()` 调，真正首次的基线只补最近 10 条，重启补漏则按 seen 只补没见过的）。以前走帖子详情页抠内嵌 JSON，第一次请求就可能被拦成验证页，已换掉。
 
 ### 7.2 实现链路
 

@@ -93,7 +93,9 @@ key, kind, icon, time, title, content, bar, ctx_user, ctx_text, link
 
 `state.json` 记录每个来源已见过的 `key`（每来源保留最近 500 条）。skey 命名：股吧用裸 uid，推特 `tw:<handle>`，微博 `wb:<uid>`。
 
-`core.py` 的 `_emit()` 实现关键语义：**每个来源第一次抓取成功**时，把结果当基线塞进列表但**不弹通知**（避免启动刷屏），之后才提示新增。按来源分别 seed（`self._seeded`）是有意为之——历史上曾因全局单一 seed 标志，导致某个来源开机时抓取失败就永远不显示（见 commit 7a3d470）。
+`core.py` 的 `_emit()` 实现关键语义：**每个来源本次运行第一次抓取成功**时分两种情况——`state.json` 里没这个来源（真正第一次监控）：把最近 10 条当基线塞进列表但**不弹通知**（避免刷屏）；`state.json` 里已有记录（只是重启过）：用持久化的已见 key 做差集当作**离线期间的积压**，全部入列/写库、通知合并成一条。之后的轮次才逐条提示新增。按来源分别 seed（`self._seeded`）是有意为之——历史上曾因全局单一 seed 标志，导致某个来源开机时抓取失败就永远不显示（见 commit 7a3d470）。
+
+离线补漏那一轮 `_run_loop` 调 `monitor.collect_items(cfg, uid, seen=..., max_pages=BACKFILL_MAX_PAGES)`：整页都是没见过的 key 才翻下一页，碰到已见 key 或翻满 3 页停；正常轮次和第一次监控都只拉第 1 页，不多打接口。
 
 注意 `monitor.py` 的 `check_user()` 有一套**独立实现**的相同语义（用 `uid not in state` 判首次），两者共享同一个 `state.json`。
 

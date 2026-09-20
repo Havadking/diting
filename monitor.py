@@ -38,8 +38,8 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
 
 # 发帖/文章/转发：用「全部动态」接口(type=1)，能拿到股吧短帖（fullarticlelist 只有财富号文章，会漏帖）
-POST_API = "https://i.eastmoney.com/api/guba/userdynamiclistv2?uid=%s&pagenum=1&pagesize=20&type=1"
-REPLY_API = "https://i.eastmoney.com/api/guba/myreply?uid=%s&pageindex=1"
+POST_API = "https://i.eastmoney.com/api/guba/userdynamiclistv2?uid=%s&pagenum=%d&pagesize=20&type=1"
+REPLY_API = "https://i.eastmoney.com/api/guba/myreply?uid=%s&pageindex=%d"
 # 帖子全文 + 作者追加(post_add_list)。列表接口的 post_content 超过 200 字就截成摘要补"..."，全文和追加
 # 都只有这里给。以前用帖子详情页 news,{code},{post_id}.html 抠内嵌 JSON，那个页面第一次请求就可能被拦成
 # 反爬验证页；这个 JSON 接口实测温和得多。
@@ -250,8 +250,8 @@ def make_link(code, post_id):
 
 
 # ---------- 解析为统一格式 ----------
-def parse_posts(uid):
-    data = fetch_json(POST_API % uid, uid)
+def parse_posts(uid, page=1):
+    data = fetch_json(POST_API % (uid, page), uid)
     items = []
     for p in get_list(data):
         pid = str(p.get("post_id") or "")
@@ -275,8 +275,8 @@ def parse_posts(uid):
     return items
 
 
-def parse_replies(uid):
-    data = fetch_json(REPLY_API % uid, uid)
+def parse_replies(uid, page=1):
+    data = fetch_json(REPLY_API % (uid, page), uid)
     items = []
     for r in get_list(data):
         rid = str(r.get("reply_id") or "")
@@ -311,8 +311,7 @@ def probe_guba_user(uid):
     uid = str(uid).strip()
     if not uid or not uid.isdigit():
         raise ValueError("UID 必须是纯数字")
-    url = POST_API % uid
-    data = fetch_json(url, uid)
+    data = fetch_json(POST_API % (uid, 1), uid)
     p_list = get_list(data)
     name = ""
     if p_list:
@@ -320,7 +319,7 @@ def probe_guba_user(uid):
         name = p0.get("user_nickname") or p0.get("user_name") or ""
     if not name:
         try:
-            rdata = fetch_json(REPLY_API % uid, uid)
+            rdata = fetch_json(REPLY_API % (uid, 1), uid)
             r_list = get_list(rdata)
             if r_list:
                 r0 = r_list[0]
@@ -629,18 +628,36 @@ def build_message(user_name, it):
 
 
 # ---------- 主循环 ----------
-def collect_items(cfg, uid):
-    """按配置抓取发帖和/或评论，合并为统一列表。"""
+def _collect_pages(parse, uid, seen, max_pages):
+    """从第 1 页往后翻：只要整页都是没见过的 key（说明积压可能不止一页）就继续翻下一页，
+    碰到任何一条已见过的、翻到空页、或翻满 max_pages 页就停。seen 为空时不翻页——那是第一次
+    监控这个人，整页都"没见过"是正常的，不是积压。"""
+    items = []
+    for page in range(1, max_pages + 1):
+        if page > 1:
+            time.sleep(random.uniform(1, 2))
+        batch = parse(uid, page)
+        items += batch
+        if not batch or not seen or any(it["key"] in seen for it in batch):
+            break
+    return items
+
+
+def collect_items(cfg, uid, seen=None, max_pages=1):
+    """按配置抓取发帖和/或评论，合并为统一列表。
+    给了 seen（该用户已见过的 key 集合）且 max_pages > 1 时，会在整页全是新内容的情况下继续翻页，
+    用来补回程序没开着那段时间的积压（见 core._emit 的离线补漏）。"""
+    seen = set(seen or ())
     items = []
     if cfg.get("monitor_posts", True):
         try:
-            items += parse_posts(uid)
+            items += _collect_pages(parse_posts, uid, seen, max_pages)
         except Exception as e:
             log("抓发帖失败 uid=%s: %s" % (uid, e))
         time.sleep(random.uniform(1, 2))
     if cfg.get("monitor_replies", True):
         try:
-            items += parse_replies(uid)
+            items += _collect_pages(parse_replies, uid, seen, max_pages)
         except Exception as e:
             log("抓评论失败 uid=%s: %s" % (uid, e))
     return items

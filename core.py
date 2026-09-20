@@ -29,6 +29,7 @@ except Exception:
 APP_ID = "谛听"
 MAX_ROWS = 1000
 MERGE_LIMIT = 8  # 一轮内同一用户新增超过这么多条才合并通知，否则逐条弹
+BACKFILL_MAX_PAGES = 3  # 离线补漏最多往后翻的页数（列表接口每页 20 条），防止对东财接口打太多请求
 SUB_QUEUE_SIZE = 200  # 订阅者队列上限，满了丢最旧的，别让挂死的消费者拖住后台线程
 
 # 推特/微博监控功能暂时下线（不抓取、UI 也不显示相关内容），代码保留，改回 True 即可恢复
@@ -580,13 +581,23 @@ class MonitorCore:
 
     # ---------- 后台线程 ----------
     def _emit(self, state, skey, name, items, db):
-        """对一个来源的抓取结果做去重。该来源**第一次抓成功**时入历史(不提示)，
-        之后才弹新动态。按来源分别处理，避免某来源开机时抓取失败就永远不显示。"""
+        """对一个来源的抓取结果做去重。按来源分别处理，避免某来源开机时抓取失败就永远不显示。
+        该来源**第一次抓成功**时分两种情况：
+        - state.json 里没这个来源 → 真正第一次监控这个人，把最近 10 条当基线入历史，不提示；
+        - state.json 里已有记录 → 程序只是重启过，用持久化的已见 key 做差集，差集就是程序没开着
+          那段时间的积压，全部入列/写库，通知合并成一条（否则夜里发的会永远丢掉，见 _handle_new）。
+        之后的轮次正常弹新动态。"""
         seen = set(state.get(skey, []))
+        first_ever = skey not in state
         new_items = [it for it in items if it["key"] not in seen]
         state[skey] = list(dict.fromkeys([it["key"] for it in items] + list(seen)))[:500]
         if skey not in self._seeded:
             self._seeded.add(skey)
+            if not first_ever:
+                if new_items:
+                    new_items.sort(key=lambda x: x["time"])
+                    self._handle_new(name, new_items, db, backfill=True)
+                return
             entries = [self._add_item(name, it, db)
                        for it in sorted(items, key=lambda x: x["time"])[-10:]]
             entries = [e for e in entries if e]
@@ -619,8 +630,12 @@ class MonitorCore:
                         break
                     uid = str(u["uid"])
                     name = u.get("name") or uid
+                    # 重启后的第一轮，且这个人以前监控过：按已见 key 翻页补回离线期间的积压
+                    backfill = uid in state and uid not in self._seeded
                     try:
-                        items = monitor.collect_items(cfg, uid)
+                        items = monitor.collect_items(
+                            cfg, uid, seen=state.get(uid) if backfill else None,
+                            max_pages=BACKFILL_MAX_PAGES if backfill else 1)
                     except Exception as e:
                         self.set_status("抓取 %s 失败：%s" % (name, e))
                         continue
@@ -699,10 +714,12 @@ class MonitorCore:
 
     # —— 帖子追加监视（只在后台线程读写 self._append_watch，不用加锁）——
     def _complete_truncated(self, state, uid, name, items):
-        """列表接口把长帖截成 200 字摘要，新帖子在入列前去拿全文。首轮基线只补 _emit 会用到的最近 10 条，
-        免得开机时一个用户就打二十次全文接口。"""
+        """列表接口把长帖截成 200 字摘要，新帖子在入列前去拿全文。第一次监控某人的首轮基线只补
+        _emit 会用到的最近 10 条，免得开机时一个用户就打二十次全文接口；重启后的离线补漏则由
+        complete_truncated 自己按 seen 过滤，只补真正没见过的。"""
         seen = set(state.get(uid, []))
-        candidates = items if uid in self._seeded else sorted(items, key=lambda x: x["time"])[-10:]
+        baseline = uid not in self._seeded and uid not in state
+        candidates = sorted(items, key=lambda x: x["time"])[-10:] if baseline else items
         monitor.complete_truncated(
             candidates, seen,
             on_error=lambda it, e: self.set_status("取 %s 全文失败：%s" % (name, str(e)[:80])))
@@ -760,7 +777,9 @@ class MonitorCore:
             self._append_fail_streak = 0
 
     # ---------- 新动态：入列 + 通知 ----------
-    def _handle_new(self, name, items, db):
+    def _handle_new(self, name, items, db, backfill=False):
+        """backfill=True 是重启后补回的离线积压：照常入列/写库/广播 new，但不管多少条都只合并成一条通知，
+        免得开机连弹一串。"""
         self.refresh_config_maps()   # 取最新的静音/颜色设置
         # 只对「确实是新的」条目弹通知（按 key 去重），防止偶发重复推送
         fresh = []
@@ -776,6 +795,13 @@ class MonitorCore:
         # 静音用户：只入列表、不弹通知
         if name in self.muted:
             self.set_status("🔕 %s 新增 %d 条（静音·仅入列）· %s"
+                            % (name, len(fresh), datetime.now().strftime("%H:%M:%S")))
+            return
+        if backfill:
+            toast("【%s】离线期间 %d 条新动态" % (name, len(fresh)),
+                  ("最新：%s" % (fresh[-1]["content"] or fresh[-1]["title"]))[:80],
+                  fresh[-1]["link"])
+            self.set_status("%s 补回离线期间 %d 条 · %s"
                             % (name, len(fresh), datetime.now().strftime("%H:%M:%S")))
             return
         # 突发多条时尽量逐条弹（上限 MERGE_LIMIT 条）；超过才合并成一条，避免极端刷屏
