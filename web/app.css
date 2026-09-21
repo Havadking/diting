@@ -213,17 +213,26 @@
   .mkt .err { color: var(--danger); font-size: 12px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
   /* 收盘 / 休市 / 接口失败：数字淡化表示不再更新 */
   .mkt.stale .idx .px, .mkt.stale .idx .chg, .mkt.stale .amt .v { opacity: .55; }
-  /* 响应式：按信息价值逐级减。断点与顶栏一致。
-     ≤1150px：去掉沪深300、「vs 昨日同时段」文字、百分比、迷你柱
-     ≤900px（竖屏副屏）：再去掉点位、刷新时间、阶段文字、「两市」标签
+  /* 响应式：按信息价值逐级减。每一档的阈值 = 上一档内容实际需要的宽度（mock 数据下量出来的），
+     这样刚跨过断点时右侧留白不会突然多出一大截；各档去掉的东西也尽量小步走。
+     ≤1150px：去掉沪深300、「vs 昨日同时段」文字、百分比、迷你柱（剩余约 910px）
+     ≤940px：再去掉刷新时间、收紧间距（剩余约 790px）
+     ≤800px：再去掉阶段文字、「两市」标签（剩余约 720px）
+     ≤720px（竖屏副屏）：再去掉点位，只留涨跌幅（剩余约 520px）
      ≤480px（手机竖屏）：再去掉成交额和 ✕（「⋯」菜单里仍可隐藏） */
   @media (max-width: 1150px) {
     .mkt .idx.extra, .mkt .vol .vs, .mkt .vol .bars, .mkt .vol .pct { display: none; }
   }
-  @media (max-width: 900px) {
+  @media (max-width: 940px) {
     .mkt { padding: 0 10px 0 12px; }
     .mkt .seg { padding: 0 8px; }
-    .mkt .idx .px, .mkt .tail time, .mkt .phase .ph-lbl, .mkt .amt .lb { display: none; }
+    .mkt .tail time { display: none; }
+  }
+  @media (max-width: 800px) {
+    .mkt .phase .ph-lbl, .mkt .amt .lb { display: none; }
+  }
+  @media (max-width: 720px) {
+    .mkt .idx .px { display: none; }
   }
   @media (max-width: 480px) {
     .mkt .seg { padding: 0 6px; }
