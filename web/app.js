@@ -335,7 +335,7 @@
   const BOTTOM_SLACK = 40;    // 距底部多少像素以内算"在底部"
 
   /* ---------- 组件 ---------- */
-  function Card({ it, color, open, isNew, onToggle, kw, stockDict, stockRegex }) {
+  function Card({ it, color, open, isNew, dense, onToggle, kw, stockDict, stockRegex }) {
     const k = KINDS[it.kind] || KINDS["发帖"];
     const { ctx, body } = useMemo(() => splitCtx(it), [it]);
     const cls = ["card", open && "open", isNew && "new", it.kind === "追加" && "append"].filter(Boolean).join(" ");
@@ -352,6 +352,11 @@
       return "";
     }, [it.link, it.bar, stockDict]);
     const barUrl = barCode ? getStockQuoteUrl(barCode) : null;
+    // 紧凑模式收起时是两行：上行元信息（上下文挤进 head、「评论」字样 pill 已经表达就省掉），下行正文
+    const inlineCtx = dense && !open;
+    const ctxEl = ctx && (inlineCtx
+      ? html`<span class="ctx">${ctx.label !== "评论" && ctx.label + " "}${ctx.title && html`<b>《${renderRichContent(ctx.title, kw, stockDict, stockRegex)}》</b>`}${it.quote_text && html`<span class="ctx-more"> · 回复 ${it.quote_user || "股友"}</span>`}</span>`
+      : html`<div class="ctx">${ctx.label}${ctx.title && html`<b>《${renderRichContent(ctx.title, kw, stockDict, stockRegex)}》</b>`}${it.quote_text && html`<span class="ctx-more">· 回复 ${it.quote_user || "股友"}</span>`}</div>`);
 
     return html`
       <div class=${cls} style=${style} tabIndex="0" onClick=${onToggle} data-key=${it.key} title=${titleTip}
@@ -366,9 +371,10 @@
                  title=${"查看 " + it.bar + " 东方财富行情 ↗"} onClick=${e => e.stopPropagation()}>
                 ${highlight(it.bar, kw)}
               </a>` : html`<span class="bar">${highlight(it.bar, kw)}</span>`)}
+            ${inlineCtx && ctxEl}
             <time class="t" dateTime=${it.time}>${it.time.slice(11, 16)}</time>
           </div>
-          ${ctx && html`<div class="ctx">${ctx.label}${ctx.title && html`<b>《${renderRichContent(ctx.title, kw, stockDict, stockRegex)}》</b>`}${it.quote_text && html`<span class="ctx-more">· 回复 ${it.quote_user || "股友"}</span>`}</div>`}
+          ${!inlineCtx && ctxEl}
           ${open && it.quote_text && html`
             <blockquote class="quote" title="被回复的评论">
               <span class="qwho">${it.quote_user || "股友"}：</span>${renderRichContent(it.quote_text, kw, stockDict, stockRegex)}
@@ -395,7 +401,7 @@
       </div>`;
   }
 
-  function DateGroup({ date, list, isToday, collapsed, onToggle, colorOf, openKey, setOpenKey, newKeys, kw, firstUnreadKey, dividerTime, onClearDivider, stockDict, stockRegex }) {
+  function DateGroup({ date, list, isToday, collapsed, onToggle, colorOf, openKey, setOpenKey, newKeys, dense, kw, firstUnreadKey, dividerTime, onClearDivider, stockDict, stockRegex }) {
     return html`
       <section>
         <div class="dhead">
@@ -412,7 +418,7 @@
             ${list.map(it => html`
               <${React.Fragment} key=${it.key}>
                 ${it.key === firstUnreadKey && html`<${UnreadDivider} time=${dividerTime} onClear=${onClearDivider}/>`}
-                <${Card} it=${it} color=${colorOf(it.name)} open=${openKey === it.key} isNew=${newKeys.has(it.key)}
+                <${Card} it=${it} color=${colorOf(it.name)} open=${openKey === it.key} isNew=${newKeys.has(it.key)} dense=${dense}
                          kw=${kw} stockDict=${stockDict} stockRegex=${stockRegex}
                          onToggle=${() => setOpenKey(k => (k === it.key ? null : it.key))}/>
               </${React.Fragment}>`)}
@@ -1374,7 +1380,7 @@
                     onClick=${toggleSound}>
               ${sound ? I.volume : I.volumeX}
             </button>
-            <button class=${"btn quiet only-wide" + (dense ? " active" : "")} title=${dense ? "切到标准卡片模式" : "切到紧凑单行模式"} onClick=${toggleDense}>
+            <button class=${"btn quiet only-wide" + (dense ? " active" : "")} title=${dense ? "切到标准卡片模式" : "切到紧凑模式"} onClick=${toggleDense}>
               ${dense ? I.cards : I.rows}
             </button>
             ${!showMarket && html`<button class="btn quiet only-wide" title="显示大盘条" onClick=${() => setShowMarket(true)}>${I.chart}</button>`}
@@ -1476,7 +1482,7 @@
               </div>`}
             ${groups.map(([d, list]) => html`
               <${DateGroup} key=${d} date=${d} list=${list} isToday=${d === td} collapsed=${collapsedOf(d)}
-                            onToggle=${() => toggleDate(d)} colorOf=${colorOf} openKey=${openKey} setOpenKey=${setOpenKey} newKeys=${newKeys} kw=${activeQuery}
+                            onToggle=${() => toggleDate(d)} colorOf=${colorOf} openKey=${openKey} setOpenKey=${setOpenKey} newKeys=${newKeys} dense=${dense} kw=${activeQuery}
                             firstUnreadKey=${firstUnreadKey} dividerTime=${dividerTime} onClearDivider=${() => setFirstUnreadKey(null)}
                             stockDict=${stockDict} stockRegex=${stockRegex}/>`)}
             ${s.loaded && !s.items.length && html`<p class="empty">还没有任何动态。</p>`}

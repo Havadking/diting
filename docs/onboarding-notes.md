@@ -325,7 +325,7 @@ React 18 + htm，单文件 `web/app.js`（约 1060 行），所有状态在一�
 
 这些是**只在 `web/` 里存在的功能**，排查"某功能为什么旧版没有"时看这里：
 
-1. 紧凑单行模式（Dense Mode，localStorage `diting.dense`）
+1. 紧凑模式（Dense Mode，localStorage `diting.dense`）：收起时两行——上行用户名·类型·吧名·《标题》·回复谁·时间，下行正文最多两行
 2. 全局搜索：本地过滤 + `Enter` 触发全库检索（`/api/search`）+ 关键词 `<mark>` 高亮
 3. 在线增删用户与参数管理（`/api/probe_user` + `/api/users/manage`，含添加前探测昵称、二次确认删除、就地改备注名、改轮询/查追加间隔）
 4. 盯盘声音提示（后台标签页才响）

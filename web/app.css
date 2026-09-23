@@ -424,51 +424,34 @@
     font-family: var(--mono); font-variant-numeric: tabular-nums;
   }
 
-  /* ---------- 紧凑单行模式 (Dense Mode) ---------- */
+  /* ---------- 紧凑模式 (Dense Mode)：两行——上行元信息，下行正文最多两行 ---------- */
   .dense .cards { gap: 3px; }
   .dense .card {
-    border-radius: 6px; box-shadow: none;
+    grid-template-columns: 3px 1fr; border-radius: 6px; box-shadow: none;
     transition: background-color .1s, border-color .1s;
   }
-  .dense .card:not(.open) {
-    display: flex; align-items: center; min-height: 30px;
-  }
-  .dense .card:not(.open) .stripe {
-    width: 3px; align-self: stretch; flex-shrink: 0;
-  }
   .dense .card:not(.open) .body {
-    padding: 3px 10px; display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;
+    padding: 5px 12px 6px 10px; display: flex; flex-direction: column; gap: 1px;
   }
+  /* 上行：用户名 · 类型 · 吧名 · 《标题》· 回复谁 ……时间；上下文只剩浅灰文字，放不下就截断 */
   .dense .card:not(.open) .head {
-    display: inline-flex; align-items: center; gap: 6px; margin-bottom: 0; flex-shrink: 0;
+    flex-wrap: nowrap; gap: 6px; margin-bottom: 0; min-width: 0; height: 18px; font-size: 11.5px; line-height: 18px;
   }
-  .dense .card:not(.open) .uname {
-    font-size: 13px; font-weight: 600;
-  }
-  .dense .card:not(.open) .pill {
-    height: 18px; padding: 0 5px; font-size: 11px; border-radius: 4px;
-  }
-  .dense .card:not(.open) .bar {
-    font-size: 12px;
-  }
+  .dense .card:not(.open) .uname { font-size: 12px; white-space: nowrap; flex-shrink: 0; }
+  .dense .card:not(.open) .pill { height: 18px; padding: 0 5px; font-size: 11px; border-radius: 4px; flex-shrink: 0; }
+  .dense .card:not(.open) .bar { font-size: 11.5px; white-space: nowrap; flex-shrink: 0; }
   .dense .card:not(.open) .ctx {
-    margin-bottom: 0; font-size: 11px; padding: 1px 5px; flex-shrink: 0; height: 18px;
-    max-width: 180px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+    display: block; flex: 0 1 auto; min-width: 0; margin: 0; padding: 0; background: none; border-radius: 0;
+    font-size: 11.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .dense .card:not(.open) .txt {
-    font-size: 13px; line-height: 1.4; color: var(--ink-2);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: none;
-    flex: 1; min-width: 0; display: block;
-  }
-  .dense .card:not(.open) .t {
-    font-size: 11px; margin-left: 6px; flex-shrink: 0;
-  }
-  .dense .card:not(.open).new .body::after {
-    position: static; font-size: 10px; line-height: 14px; padding: 0 3px; margin-left: 4px; flex-shrink: 0;
-  }
-  .dense .card:not(.open).new .t {
-    margin-right: 0;
-  }
+  .dense .card:not(.open) .ctx::before { content: "· "; }
+  .dense .card:not(.open) .ctx b { font-weight: 400; color: var(--ink-2); }
+  .dense .card:not(.open) .ctx .ctx-more { color: var(--ink-3); }
+  .dense .card:not(.open) .t { font-size: 11px; padding-left: 8px; flex-shrink: 0; }
+  /* 下行：正文占满整行，短评论一行，长帖最多两行 */
+  .dense .card:not(.open) .txt { font-size: 13.5px; line-height: 1.5; }
+  .dense .card:not(.open).new .body::after { top: 6px; right: 12px; font-size: 10px; line-height: 14px; padding: 0 3px; }
+  .dense .card:not(.open).new .t { margin-right: 26px; }
   .dense .card.open {
     padding: 2px 0;
   }
