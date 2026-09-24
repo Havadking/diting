@@ -57,6 +57,7 @@
     x: svg('<path d="M18 6L6 18M6 6l12 12"/>'),
     chart: svg('<path d="M3 3v18h18M7 15l4-5 3 3 5-7"/>'),
     volume: svg('<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14"/>'),
+    chat: svg('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'),
     volumeX: svg('<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>'),
   };
 
@@ -861,6 +862,191 @@
   }
 
 
+  /* ---------- 我的评论 ----------
+   * 自己账号的全部历史评论：后端点「同步」时翻 myreply 接口存进 my_replies 表，这里只读本地库。
+   * 按时间倒序（最新在上，跟翻历史的习惯一致，和动态列表相反）；同步进度走 SSE 的 my_sync 事件。 */
+  const MY_PAGE = 50;
+  // 粘贴整个主页地址也认：https://i.eastmoney.com/1234567890123456 → 取里面最长的一串数字
+  const pickUid = v => { const m = String(v || "").match(/\d{6,}/g); return m ? m.sort((a, b) => b.length - a.length)[0] : String(v || "").trim(); };
+
+  function MyReplyCard({ it, kw, onTarget, stockDict, stockRegex }) {
+    const target = it.to_user || it.post_user;
+    return html`
+      <article class="mcard">
+        <div class="mhead">
+          ${it.to_user
+            ? html`<span class="mto">回复 <button class="tuser" title=${"只看回复 " + it.to_user + " 的"} onClick=${() => onTarget(it.to_user)}>@${highlight(it.to_user, kw)}</button></span>`
+            : html`<span class="mto">评论${target ? html` <button class="tuser" title=${"只看回复 " + target + " 的"} onClick=${() => onTarget(target)}>@${highlight(target, kw)}</button> 的帖子` : "帖子"}</span>`}
+          ${it.bar && html`<span class="bar">${highlight(it.bar, kw)}</span>`}
+          <time class="t" dateTime=${it.time} title=${it.time}>${it.time.slice(11, 16)}</time>
+        </div>
+        ${it.to_text && html`
+          <blockquote class="quote" title="被回复的评论"><span class="qwho">${it.to_user}：</span>${renderRichContent(it.to_text, kw, stockDict, stockRegex)}</blockquote>`}
+        <div class="mtxt">${renderRichContent(it.content || "(无正文)", kw, stockDict, stockRegex)}</div>
+        <div class="mfoot">
+          ${it.post_title && html`<span class="ptitle" title=${it.post_title}>《${highlight(it.post_title, kw)}》</span>`}
+          ${it.to_user && it.post_user && html`<span>帖主 ${highlight(it.post_user, kw)}</span>`}
+          ${it.link && html`<a href=${it.link} target="_blank" rel="noopener">打开原帖 ↗</a>`}
+        </div>
+      </article>`;
+  }
+
+  function MineView({ syncEvent, toast, stockDict, stockRegex }) {
+    const [data, setData] = useState(null);       // 第一页响应里的 uid / total / targets / range / meta
+    const [items, setItems] = useState([]);
+    const [hasMore, setHasMore] = useState(false);
+    const [sync, setSync] = useState(null);
+    const [query, setQuery] = useState("");
+    const [q, setQ] = useState("");               // 防抖后的关键词
+    const [to, setTo] = useState("");
+    const [moreBusy, setMoreBusy] = useState(false);
+    const [uidInput, setUidInput] = useState("");
+    const [editUid, setEditUid] = useState(false);
+    const [allTargets, setAllTargets] = useState(false);
+    const seq = useRef(0);
+    const gotEvent = useRef(false);   // 收到过 SSE 进度就以它为准，别被一个晚到的 GET 响应里的旧状态盖掉
+
+    const load = useCallback(async (cursor) => {
+      const my = ++seq.current;
+      const p = new URLSearchParams({ limit: String(MY_PAGE) });
+      if (q) p.set("q", q);
+      if (to) p.set("to", to);
+      if (cursor) { p.set("before", cursor.time); p.set("before_key", cursor.key); }
+      const r = await fetch("/api/my/replies?" + p, { cache: "no-store" });
+      const d = await r.json();
+      if (my !== seq.current) return;
+      if (!d.ok) throw new Error(d.error || "读取失败");
+      if (!gotEvent.current) setSync(d.sync);
+      setHasMore(!!d.has_more);
+      if (cursor) setItems(prev => prev.concat(d.items || []));
+      else { setItems(d.items || []); setData(d); }
+    }, [q, to]);
+
+    useEffect(() => { const t = setTimeout(() => setQ(query.trim()), 300); return () => clearTimeout(t); }, [query]);
+    useEffect(() => { load().catch(e => toast("读取失败：" + e.message, "error")); }, [load]);
+    // 同步进度：每翻完一页刷新一次第一页（本地库，很便宜），跑完再刷一次拿最终的总数和对象排行
+    const lastPage = useRef(-1);
+    useEffect(() => {
+      if (!syncEvent) return;
+      gotEvent.current = true;
+      setSync(syncEvent);
+      if (!syncEvent.running || syncEvent.page !== lastPage.current) {
+        lastPage.current = syncEvent.page;
+        if (!syncEvent.running || items.length <= MY_PAGE) load().catch(() => {});
+      }
+    }, [syncEvent]);
+
+    const startSync = async (opts) => {
+      try {
+        const d = await post("/api/my/sync", opts || {});
+        setSync(d.sync);
+        if (opts && opts.uid) { setEditUid(false); setTo(""); setQuery(""); load().catch(() => {}); }
+      } catch (e) { toast(e.message, "error"); }
+    };
+    const submitUid = () => {
+      const uid = pickUid(uidInput);
+      if (!/^\d+$/.test(uid)) return toast("UID 是一串纯数字，个人主页地址 i.eastmoney.com/ 后面那段", "error");
+      startSync({ uid });
+    };
+    const loadMore = async () => {
+      const last = items[items.length - 1];
+      if (!last || moreBusy) return;
+      setMoreBusy(true);
+      try { await load(last); } catch (e) { toast("加载失败：" + e.message, "error"); }
+      finally { setMoreBusy(false); }
+    };
+
+    if (!data) return html`<div class="mine"><p class="empty">读取中…</p></div>`;
+    const running = !!(sync && sync.running);
+    const meta = data.meta || {};
+
+    if (!data.uid || editUid) return html`
+      <div class="mine">
+        <div class="mine-setup">
+          <h3>${data.uid ? "更换自己的 UID" : "先告诉谛听你是谁"}</h3>
+          <p>打开自己的东方财富个人主页，地址 <code>i.eastmoney.com/</code> 后面那串数字就是 UID（直接粘贴整个地址也行）。</p>
+          <div class="add-form">
+            <input class="input-text uid-input" placeholder="你的 UID" value=${uidInput} autoFocus
+                   onInput=${e => setUidInput(e.target.value)} onKeyDown=${e => e.key === "Enter" && submitUid()}/>
+            <button class="btn primary" disabled=${running} onClick=${submitUid}>保存并开始同步</button>
+            ${data.uid && html`<button class="btn quiet" onClick=${() => setEditUid(false)}>取消</button>`}
+          </div>
+          <p class="hint">评论列表是公开接口，按页往回翻、每页间隔两秒左右，几千条要翻几分钟；同步在后台进行，可以切回动态列表。
+            之后再点「同步最新」只补新增的部分。数据只存在本机 messages.db 里。</p>
+        </div>
+      </div>`;
+
+    // 按日期分组（倒序）
+    const groups = [];
+    for (const it of items) {
+      const d = it.time.slice(0, 10);
+      if (!groups.length || groups[groups.length - 1][0] !== d) groups.push([d, []]);
+      groups[groups.length - 1][1].push(it);
+    }
+    const targets = data.targets || [];
+    const shownTargets = allTargets ? targets : targets.slice(0, 12);
+    const filtering = !!(q || to);
+    return html`
+      <div class="mine">
+        <div class="mine-head">
+          <div class="who">
+            <h2>我的评论</h2>
+            ${meta.nickname && html`<span class="nick">${meta.nickname}</span>`}
+            <button class="uid" title="更换 UID" onClick=${() => { setUidInput(data.uid); setEditUid(true); }}>UID ${data.uid}</button>
+          </div>
+          <span class="spacer"/>
+          ${running
+            ? html`<button class="btn" onClick=${() => post("/api/my/sync", { cancel: true }).catch(e => toast(e.message, "error"))}>${I.pause}<span class="lbl">停止同步</span></button>`
+            : html`
+              <button class="btn quiet" title="从第 1 页重新翻到最后一页（补漏用，比较慢）"
+                      onClick=${() => window.confirm("从第 1 页重新翻一遍全部评论？评论多的话要好几分钟。") && startSync({ full: true })}>全量重翻</button>
+              <button class="btn primary" onClick=${() => startSync()}>${I.down}<span class="lbl">${data.total ? "同步最新" : "开始同步"}</span></button>`}
+        </div>
+
+        <div class="sum-meta">
+          <span>共 <b>${(data.total || 0).toLocaleString()}</b> 条</span>
+          ${data.range && data.range[0] && html`<span>最早 <b>${data.range[0].slice(0, 10)}</b></span>`}
+          ${meta.last_sync && html`<span>上次同步 <b>${meta.last_sync.slice(5, 16)}</b></span>`}
+          ${data.total > 0 && !meta.complete && !running && html`<span class="warn">还没翻到最早的评论，再点一次同步会接着翻</span>`}
+        </div>
+        ${sync && sync.text && html`
+          <div class=${"mine-sync" + (sync.error ? " err" : "") + (running ? " on" : "")}>${running && html`<i/>`}<span>${sync.text}</span></div>`}
+
+        <div class="mine-filter">
+          <div class="search-wrap">
+            <span class="search-icon">${I.search}</span>
+            <input class="search-input" placeholder="搜评论、帖子标题、对方原话…" value=${query} onInput=${e => setQuery(e.target.value)}
+                   onKeyDown=${e => e.key === "Escape" && setQuery("")}/>
+            ${query && html`<button class="search-clear" title="清空" onClick=${() => setQuery("")}>${I.x}</button>`}
+          </div>
+          ${targets.length > 0 && html`
+            <div class="targets">
+              <span class="tl">回复对象</span>
+              <button class=${"chip" + (!to ? " on" : "")} onClick=${() => setTo("")}><span>全部</span></button>
+              ${to && !shownTargets.some(t => t.name === to) && html`<button class="chip on"><span>${to}</span></button>`}
+              ${shownTargets.map(t => html`
+                <button key=${t.name} class=${"chip" + (to === t.name ? " on" : "")} title=${"回复过 " + t.name + " " + t.count + " 次"}
+                        onClick=${() => setTo(v => v === t.name ? "" : t.name)}><span>${t.name}</span><em>${t.count}</em></button>`)}
+              ${targets.length > 12 && html`<button class="link" onClick=${() => setAllTargets(v => !v)}>${allTargets ? "收起" : "更多 " + (targets.length - 12)}</button>`}
+            </div>`}
+        </div>
+        ${filtering && html`<div class="sum-meta"><span>筛选出 <b>${(data.matched || 0).toLocaleString()}</b> 条</span>
+          <button class="link" onClick=${() => { setQuery(""); setTo(""); }}>清除筛选</button></div>`}
+
+        ${groups.map(([d, list]) => html`
+          <section key=${d}>
+            <div class="dhead"><span class="d">${d === today() ? "今天" : d}</span><span class="wk">${weekday(d)}</span>
+              <span class="n">${list.length}</span><span class="rule"/></div>
+            <div class="cards">
+              ${list.map(it => html`<${MyReplyCard} key=${it.key} it=${it} kw=${q} onTarget=${n => setTo(n)} stockDict=${stockDict} stockRegex=${stockRegex}/>`)}
+            </div>
+          </section>`)}
+        ${hasMore && html`<div class="older"><button class="btn quiet" disabled=${moreBusy} onClick=${loadMore}>${moreBusy ? "加载中…" : "加载更多"}</button></div>`}
+        ${!items.length && html`<p class="empty">${filtering ? "没有符合条件的评论。" : running ? "正在同步，翻完第一页就会显示…" : "本地还没有评论，点右上角「开始同步」。"}</p>`}
+      </div>`;
+  }
+
+
   /* ---------- 大盘条 ---------- */
   const PHASE = {
     pre: { cls: "pre", lbl: "集合竞价" }, open: { cls: "", lbl: "盘中" }, lunch: { cls: "off", lbl: "午间休市" },
@@ -912,8 +1098,11 @@
     const [drawer, setDrawer] = useState(false);
     const [aiDrawer, setAiDrawer] = useState(false);
     const [aiVersion, setAiVersion] = useState(0);
-    const [view, setView] = useState(() => store.get("diting.view") === "summary" ? "summary" : "feed");
-    const toggleView = () => setView(v => { const n = v === "feed" ? "summary" : "feed"; store.set("diting.view", n); return n; });
+    const [view, setView] = useState(() => { const v = store.get("diting.view"); return v === "summary" || v === "mine" ? v : "feed"; });
+    // 顶栏「日报」「我的」按钮：点当前所在的视图就回到动态列表
+    const switchView = target => setView(v => { const n = v === target ? "feed" : target; store.set("diting.view", n); return n; });
+    const viewRef = useRef(view); viewRef.current = view;
+    const [mySync, setMySync] = useState(null);   // 「我的评论」同步进度（SSE my_sync 事件）
     const [menu, setMenu] = useState(false);
     const [theme, setTheme] = useState(() => { const t = store.get("diting.theme", "system"); return THEMES.includes(t) ? t : "system"; });
     useEffect(() => { applyTheme(theme); store.set("diting.theme", theme); }, [theme]);
@@ -1117,7 +1306,10 @@
     }, []);
 
     // 从日报页切回列表：feed 隐藏期间滚动容器高度归零、位置丢失，回来一律回到最下面（最新）
-    useLayoutEffect(() => { if (view === "feed" && s.loaded) scrollToBottom(false); }, [view]);
+    useLayoutEffect(() => {
+      if (view === "feed" && s.loaded) scrollToBottom(false);
+      else if (view === "mine" && mainRef.current) mainRef.current.scrollTop = 0;   // 我的评论是最新在上
+    }, [view]);
 
     // 回底浮标放在「卡片右边缘 ↔ 滚动条」这条空档的正中间，别压在列表上。空档随窗口宽度/侧栏收起/
     // 卡片限宽变化，用 ResizeObserver 量出来写成 CSS 变量 --fab-right；空档太窄就贴着滚动条放。
@@ -1155,7 +1347,7 @@
         const b = isAtBottom();
         setAtBottom(b);
         if (b) setPendingBelow(0);
-        if (el.scrollTop < 80) loadOlderRef.current();
+        if (el.scrollTop < 80 && viewRef.current === "feed") loadOlderRef.current();   // 别的视图滚到顶不该去翻隐藏着的动态列表
       };
       el.addEventListener("scroll", h, { passive: true });
       return () => el.removeEventListener("scroll", h);
@@ -1218,6 +1410,7 @@
       on("market", d => dispatch({ type: "market", market: d }));
       on("cleared", () => { dispatch({ type: "cleared" }); setPendingBelow(0); });
       on("config", d => dispatch({ type: "config", users: d.users, groups: d.groups }));
+      on("my_sync", setMySync);
       return () => { alive = false; es.close(); };
     }, [onNew]);
 
@@ -1381,7 +1574,8 @@
             <button class="btn" title=${st.running ? "停止监控" : "开始监控"} onClick=${act.toggleRun} disabled=${!s.connected}>
               ${st.running ? I.pause : I.play}<span class="lbl">${st.running ? "停止监控" : "开始监控"}</span>
             </button>
-            <button class=${"btn" + (view === "summary" ? " active" : "")} title=${view === "summary" ? "返回动态列表" : "AI 日报：让模型总结某人一天的动态"} onClick=${toggleView} disabled=${!s.loaded}>${I.doc}<span class="lbl">${view === "summary" ? "动态" : "日报"}</span></button>
+            <button class=${"btn" + (view === "summary" ? " active" : "")} title=${view === "summary" ? "返回动态列表" : "AI 日报：让模型总结某人一天的动态"} onClick=${() => switchView("summary")} disabled=${!s.loaded}>${I.doc}<span class="lbl">${view === "summary" ? "动态" : "日报"}</span></button>
+            <button class=${"btn only-wide" + (view === "mine" ? " active" : "")} title=${view === "mine" ? "返回动态列表" : "我的评论：自己账号的全部历史评论，含回复给谁"} onClick=${() => switchView("mine")} disabled=${!s.loaded}>${I.chat}<span class="lbl">${view === "mine" ? "动态" : "我的"}</span></button>
             <button class="btn" title="用户设置" onClick=${() => setDrawer(true)} disabled=${!s.loaded}>${I.gear}<span class="lbl">设置</span></button>
             <button class="btn quiet only-wide" title="测试通知" onClick=${act.test}>${I.bell}</button>
             <button class="btn quiet only-wide" title="清空列表" onClick=${act.clear}>${I.trash}</button>
@@ -1392,6 +1586,8 @@
               <button class="btn quiet" title="更多" onClick=${e => { e.stopPropagation(); setMenu(m => !m); }}>${I.more}</button>
               ${menu && html`
                 <div class="menu" onClick=${e => e.stopPropagation()}>
+                  <button onClick=${() => { setMenu(false); switchView("mine"); }}>${I.chat}${view === "mine" ? "返回动态列表" : "我的评论"}</button>
+                  <hr/>
                   <button onClick=${() => { setMenu(false); toggleSound(); }}>${sound ? I.volume : I.volumeX}${sound ? "声音提示：开" : "声音提示：关"}</button>
                   <button onClick=${() => { setMenu(false); toggleDense(); }}>${dense ? I.cards : I.rows}${dense ? "卡片模式" : "紧凑模式"}</button>
                   <button onClick=${() => { setMenu(false); setShowMarket(v => !v); }}>${I.chart}${showMarket ? "隐藏大盘" : "显示大盘"}</button>
@@ -1457,7 +1653,8 @@
         <main class="main" ref=${mainRef}>
           ${s.loaded && !s.connected && !s.quit && html`<div class="banner">已与后台断开，正在重连…（重连后会自动补齐漏掉的动态）</div>`}
           ${view === "summary" && s.loaded && html`<${SummaryView} users=${s.users} initialUser=${filter.user} toast=${toast} onOpenAi=${() => setAiDrawer(true)} aiVersion=${aiVersion}/>`}
-          <div class="feed" hidden=${view === "summary"}>
+          ${view === "mine" && s.loaded && html`<${MineView} syncEvent=${mySync} toast=${toast} stockDict=${stockDict} stockRegex=${stockRegex}/>`}
+          <div class="feed" hidden=${view !== "feed"}>
             ${searchDb !== null && html`
               <div class="search-banner">
                 <span>在历史数据库中找到 <b>${searchDb.length}</b> 条关于 "<b>${query}</b>" 的记录</span>

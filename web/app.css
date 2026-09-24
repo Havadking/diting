@@ -744,6 +744,52 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   .sum-err { background: color-mix(in srgb, var(--danger, #c0392b) 10%, var(--card)); border: 1px solid color-mix(in srgb, var(--danger, #c0392b) 40%, var(--line)); border-radius: 8px; padding: 12px 16px; font-size: 13px; color: var(--ink); }
 
+  /* 我的评论 */
+  .mine { max-width: 880px; margin: 0 auto; padding: 16px 28px 80px; }
+  .mine-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  .mine-head .who { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; }
+  .mine-head h2 { margin: 0; font-size: 17px; font-weight: 600; }
+  .mine-head .nick { color: var(--ink-2); font-size: 13.5px; }
+  .mine-head .uid { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); }
+  .mine-head .uid:hover { color: var(--accent); border-color: var(--accent); }
+  .mine-sync { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-2); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; margin-bottom: 12px; }
+  .mine-sync.on { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+  .mine-sync.err { border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); color: var(--ink); }
+  .mine-sync i { width: 12px; height: 12px; flex: none; border: 2px solid var(--line-strong); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+  .mine-filter { display: flex; flex-direction: column; gap: 10px; margin-bottom: 6px; }
+  .mine-filter .search-wrap { max-width: 360px; width: 100%; flex: none; margin: 0; }
+  .mine-filter .search-input { background: var(--card); }
+  .mine-filter .targets { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .mine-filter .tl { font-size: 12px; color: var(--ink-3); margin-right: 2px; }
+  .mine-filter .chip { --c: var(--accent); --kbg: var(--accent-soft); background: var(--card); }
+  .mine-filter .chip.on { background: var(--kbg); color: var(--c); }
+  .rail .mine-filter .chip { width: auto; padding: 0 10px; }   /* 窄轨模式把侧栏的 chip 缩成圆点，这里不受影响 */
+  .rail .mine-filter .chip span { display: inline; }
+  .mine-filter .chip em { font-style: normal; font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+  .mine .dhead .d { font-size: 13px; }
+  .mine .dhead .wk { font-size: 13px; }
+  .mine-setup { max-width: 560px; margin: 40px auto; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 22px 24px; box-shadow: var(--shadow); }
+  .mine-setup h3 { margin: 0 0 8px; font-size: 16px; }
+  .mine-setup p { margin: 0 0 12px; font-size: 13px; color: var(--ink-2); line-height: 1.65; }
+  .mine-setup .hint { margin: 12px 0 0; font-size: 12px; color: var(--ink-3); }
+  .mine-setup code { font-family: var(--mono); background: var(--bg); padding: 1px 5px; border-radius: 4px; }
+  .mine-setup .uid-input { width: 220px; }
+  .mcard { background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 10px 16px 11px; }
+  .mcard .mhead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 5px; font-size: 13px; color: var(--ink-2); }
+  .mcard .tuser { color: var(--k-reply-fg); font-weight: 600; font-size: 13px; }
+  .mcard .tuser:hover { text-decoration: underline; }
+  .mcard .t { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--ink-3); }
+  .mcard .quote {
+    margin: 0 0 6px; padding: 4px 10px; border-left: 3px solid var(--line-strong); border-radius: 0 6px 6px 0;
+    background: var(--bg); color: var(--ink-2); font-size: 13px; line-height: 1.55; white-space: pre-line;
+  }
+  .mcard .quote .qwho { color: var(--ink); font-weight: 500; margin-right: 2px; }
+  .mcard .mtxt { color: var(--ink); font-size: 14.5px; line-height: 1.6; white-space: pre-line; overflow-wrap: anywhere; }
+  .mcard .mfoot { display: flex; gap: 12px; flex-wrap: wrap; align-items: baseline; margin-top: 6px; font-size: 12px; color: var(--ink-3); }
+  .mcard .mfoot .ptitle { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+  .mcard .mfoot a { color: var(--accent); text-decoration: none; white-space: nowrap; }
+  .mcard .mfoot a:hover { text-decoration: underline; }
+
   /* AI 设置抽屉 */
   .ai-prof { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin: 0 24px 10px; background: var(--bg); display: grid; gap: 8px; }
   .ai-prof.on { border-color: var(--accent); }
@@ -765,7 +811,7 @@
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
   @media (max-width: 900px) {
     .feed { padding: 8px 14px 80px; }
-    .sum { padding: 12px 14px 80px; }
+    .sum, .mine { padding: 12px 14px 80px; }
     .card .body { padding: 10px 12px 11px 12px; }
     .search-wrap { max-width: 170px; }
   }

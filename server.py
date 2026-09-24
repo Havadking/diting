@@ -121,6 +121,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._api_ai_settings_get()
         if path == "/api/ai/summary":
             return self._api_ai_summary_get(parse_qs(u.query))
+        if path == "/api/my/replies":
+            return self._api_my_replies(parse_qs(u.query))
         self._send_error_json(HTTPStatus.NOT_FOUND, "not found")
 
     def do_POST(self):
@@ -144,6 +146,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._api_ai_test(body)
         if path == "/api/ai/summary":
             return self._api_ai_summary_post(body)
+        if path == "/api/my/sync":
+            return self._api_my_sync(body)
         self._send_error_json(HTTPStatus.NOT_FOUND, "not found")
 
 
@@ -315,6 +319,46 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             self.core.set_status("日报缓存写入失败：%s" % e)
         self._send_json({"ok": True, "summary": rec, "cached": False})
+
+    # ---- 我的评论 ----
+    def _api_my_replies(self, qs):
+        """「我的评论」页读取：只读本地库，不联网。没设过 UID 时 uid 为空、items 为空，前端据此显示引导。"""
+        uid = self.core.get_my_uid()
+        res = {"ok": True, "uid": uid, "sync": self.core.my_sync_state()}
+        if not uid:
+            return self._send_json({**res, "items": [], "has_more": False, "total": 0, "matched": 0, "targets": [],
+                                    "range": ["", ""], "meta": {}})
+        arg = lambda k: (qs.get(k) or [""])[0].strip()
+        try:
+            data = self.core.my_replies(uid, arg("q"), arg("to"), arg("before"), arg("before_key"),
+                                        _int_arg(qs, "limit", 50, 1, 500))
+        except Exception as e:
+            return self._send_json({"ok": False, "error": "读取失败：%s" % e}, HTTPStatus.INTERNAL_SERVER_ERROR)
+        self._send_json({**res, **data})
+
+    def _api_my_sync(self, body):
+        """{"uid": "..."} 换成自己的 UID（顺带开始同步）；{"full": true} 从第 1 页全量重翻；{"cancel": true} 停止。"""
+        core = self.core
+        if body.get("cancel"):
+            core.cancel_my_sync()
+            return self._send_json({"ok": True})
+        uid = str(body.get("uid") or "").strip()
+        if uid:
+            if not uid.isdigit():
+                return self._send_error_json(HTTPStatus.BAD_REQUEST, "UID 必须是纯数字")
+            if uid != core.get_my_uid():
+                if core.my_sync_state().get("running"):
+                    return self._send_error_json(HTTPStatus.CONFLICT, "正在同步，先停止再换 UID")
+                err = core.set_my_uid(uid)
+                if err:
+                    return self._send_json({"ok": False, "error": err}, HTTPStatus.INTERNAL_SERVER_ERROR)
+        uid = core.get_my_uid()
+        if not uid:
+            return self._send_error_json(HTTPStatus.BAD_REQUEST, "还没设置自己的 UID")
+        err = core.start_my_sync(uid, full=bool(body.get("full")))
+        if err:
+            return self._send_json({"ok": False, "error": err}, HTTPStatus.CONFLICT)
+        self._send_json({"ok": True, "uid": uid, "sync": core.my_sync_state()})
 
     # ---- 静态文件 ----
     def _serve_static(self, rel):

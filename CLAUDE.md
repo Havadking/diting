@@ -68,6 +68,7 @@ appmod.MonitorApp.start = lambda self, silent=False: None   # 跳过联网监控
 - **`server.py` + `web/`** — 网页版，主要维护对象。`server.py` 是纯标准库 `ThreadingHTTPServer`，默认只绑 `127.0.0.1`（`--host 0.0.0.0` 开放局域网给平板/手机看），接口见 `docs/web-design.md` §5；`web/app.js` 是 React 18 + htm 写的单文件前端（htm 是标签模板函数，写法 `` html`<div class=${x}>` ``，不需要 JSX 编译）。所有 `POST` 校验 `Origin` 必须等于自己（拿 `Host` 头比，不是写死 127.0.0.1，所以局域网地址访问也能过），别去掉——这是防止别的网页 fetch 本地端口让程序退出的唯一防线。
 - **`app.py`** — 旧版 tkinter 窗口，只是 `MonitorCore` 的另一层壳：`subscribe()` 一个队列，消费事件画 Treeview。稳定后会删，**不要再往里加功能**。
 - **`summary.py`** — AI 日报：把某人某天的动态预处理、拼提示词、调 OpenAI 兼容接口（DeepSeek 等）。纯函数模块，不碰 core/线程/SQLite；`server.py` 的 `/api/ai/*` 编排它，缓存表 `summaries` 建在 `monitor.get_db()` 里，`MockCore` 覆写成内存版。`config.json` 的 `ai.profiles[].api_key` 明文只在后端，接口只回脱敏 `key_hint`。详见 `docs/onboarding-notes.md` §8.1。
+- **「我的评论」**（`core.py` 的 `start_my_sync` / `my_replies` 等 + `server.py` 的 `/api/my/*` + `web/app.js` 的 `MineView`）— 自己账号（`config.json` 的 `my_uid`）的全部历史评论。和监控轮询**完全独立**：点「同步」才起一条临时 daemon 线程翻 `myreply` 接口，线程自己开写连接、翻完即关，进度广播 `("my_sync", {...})`。数据存在 `messages.db` 的 `my_replies` 表（拆开的原始字段：`to_user/to_text` 被回复的人和原话、`post_user/post_title` 帖主和标题，**不是** `messages` 那种成品展示字段，也不走统一 item 契约），翻页进度在 `my_sync_meta`（`complete` / `next_page`，中途停了下次从附近接着翻）。`MockCore` 用临时文件 SQLite + 造的假分页，走的是真 SQL。
 - **`market.py`** — 顶部大盘条：三大指数 + 两市成交额 + 相对昨日同时段的放量/缩量。纯函数（抓腾讯行情、算阶段与量比）+ `MarketFeed` 独立 daemon 线程，`server.py` 的 `main()` 创建、用 `core._broadcast` 发 `("market", payload)` 事件，**与股吧监控的启停无关**；`MockMarketFeed` 只换掉两个 `_fetch_*`。口径与契约见 `docs/market-strip-design.md`。
 - **`monitor.py`** — 双重身份：① 被 `core.py` import 的抓取/解析核心；② 独立的命令行推送版（`main()`）。注意 **`monitor.py` 的命令行 `main()` 只处理股吧用户**，推特/微博是 GUI 独有的。改抓取逻辑时两边都受影响，改轮询逻辑时通常只动 `core.py`。
 
@@ -122,7 +123,7 @@ key, kind, icon, time, title, content, bar, ctx_user, ctx_text, link
 
 ### 线程模型
 
-`core.py` 单后台线程 `_run_loop()` 轮询，处理完的条目（已入 `core.items`、已写库、已弹通知）通过 `_broadcast()` 推给所有订阅者队列（`subscribe()` 拿，满 200 条丢最旧的，别让挂死的浏览器 tab 拖住后台线程）。事件形状：`("history"|"new", [entry...])`、`("status", {text, running, last_check})`、`("config", {users})`、`("cleared", {})`、`("market", {...})`（大盘条，由 `market.MarketFeed` 线程而非 `_run_loop` 发出）。
+`core.py` 单后台线程 `_run_loop()` 轮询，处理完的条目（已入 `core.items`、已写库、已弹通知）通过 `_broadcast()` 推给所有订阅者队列（`subscribe()` 拿，满 200 条丢最旧的，别让挂死的浏览器 tab 拖住后台线程）。事件形状：`("history"|"new", [entry...])`、`("status", {text, running, last_check})`、`("config", {users})`、`("cleared", {})`、`("market", {...})`（大盘条，由 `market.MarketFeed` 线程而非 `_run_loop` 发出）、`("my_sync", {running, uid, page, added, text, error, done_at})`（「我的评论」同步进度，由临时同步线程发出）。
 
 - 网页版：每个 SSE 连接（`/api/events`）在自己的 handler 线程里 `subscribe()` 一个队列，`q.get(timeout=25)` 超时就发 `: ping` 保活；断开时 `unsubscribe()` 并把 `close_connection` 置 `True`，否则 handler 会回到 keep-alive 循环在已关的 socket 上读下一个请求、打一屏 traceback。前端 `EventSource` 自己重连，`onopen` 时若不是首次连接就重拉 `/api/snapshot` 合并补漏。
 - tkinter 版：主线程 `_poll_queue()` 每 400ms 消费一次并渲染，**所有 tkinter 调用必须在主线程**。
@@ -136,6 +137,7 @@ key, kind, icon, time, title, content, bar, ctx_user, ctx_text, link
 - 条目按 `(time, key)` 升序，**今天在最下面、最新在最底**，和旧窗口版习惯一致；日期组默认只展开今天。
 - `content` 里的 `[评论《xx》] 正文` / `[转发自 某人《xx》] 正文` 前缀由 `splitCtx()` 正则拆出来单独渲染，DB 结构没改。
 - 跟随滚动用 `useLayoutEffect` + `followRef`，不用 `requestAnimationFrame`（后台标签页不跑）。
+- 三个视图 `view`：`feed`（动态）/ `summary`（AI 日报）/ `mine`（我的评论），存 `diting.view`；非 `feed` 时 `.feed` 只是 `hidden`，滚到顶的「加载更早」要判 `viewRef` 别在别的视图里触发。
 - `localStorage` 键：`diting.rail`（侧栏收起）、`diting.theme`（`system|light|dark`）、`diting.filter`、`diting.collapsed`（只记非今天的日期）。读写都经 `store` 小工具包了 try/catch。
 
 `start()` 里先 join 旧线程、再给新线程一个全新的 `threading.Event`，是为修历史上的重复推送竞态（commit be583e0）——改动启停逻辑时别退化。
@@ -172,7 +174,7 @@ commit message 用 conventional commits 格式，说明"为什么"而非"改了�
 ## 数据源
 
 - 股吧发帖/转发：`i.eastmoney.com/api/guba/userdynamiclistv2`（`type=1`）。**必须用这个而非 `fullarticlelist`**——后者只返回财富号文章，会漏掉股吧短帖。
-- 股吧评论：`i.eastmoney.com/api/guba/myreply`
+- 股吧评论：`i.eastmoney.com/api/guba/myreply`（「我的评论」同步也用它，`monitor.parse_my_replies()` 按 `pageindex` 翻到空页为止）
 - 股吧帖子全文/追加：`gbapi.eastmoney.com/content/api/Post/ArticleContent?postid={post_id}&plat=web&version=200&product=guba`（JSON，`post.post_content` 全文 HTML、`post.post_add_list` 追加，见上方「帖子全文补全与追加检查」）
 - 推特：外部 CLI `twitter user-posts @handle -n 40 --json`（`pipx install twitter-cli`），靠环境变量 `TWITTER_AUTH_TOKEN` / `TWITTER_CT0` 认证。子进程必须带 `_no_window_kwargs()` 隐藏控制台黑框。
 - 微博：`weibo.com/ajax/statuses/mymblog`，Cookie 从 `config.json` 的 `weibo_cookie` 读（至少含 `SUB`）。

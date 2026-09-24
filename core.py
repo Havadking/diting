@@ -31,6 +31,9 @@ MAX_ROWS = 1000
 MERGE_LIMIT = 8  # 一轮内同一用户新增超过这么多条才合并通知，否则逐条弹
 BACKFILL_MAX_PAGES = 3  # 离线补漏最多往后翻的页数（列表接口每页 20 条），防止对东财接口打太多请求
 SUB_QUEUE_SIZE = 200  # 订阅者队列上限，满了丢最旧的，别让挂死的消费者拖住后台线程
+MY_SYNC_MAX_PAGES = 1000   # 「我的评论」一次同步最多翻这么多页，防止接口异常时无限翻下去；没翻完下次接着翻
+MY_SYNC_DELAY = (1.5, 3.0)  # 翻页间隔（秒）。和轮询同一个列表接口，慢一点别触发风控
+MY_SYNC_RETRY_WAIT = (5, 15)  # 单页失败后的重试等待，两次都失败就停下，进度记在 my_sync_meta 里
 
 # 推特/微博监控功能暂时下线（不抓取、UI 也不显示相关内容），代码保留，改回 True 即可恢复
 ENABLE_TWITTER = False
@@ -88,6 +91,7 @@ class MonitorCore:
         # 帖子追加监视表：post_id -> {"uid","code","name","expires_at"}，只在后台线程读写，
         # 不落盘——重启后自然清空，靠正常轮询重新发现"发布在24小时内"的帖子来重建，够用了。
         self._append_watch = {}
+        self._init_my_sync()
         self.refresh_config_maps()
         self._load_history_from_db()
         if not HAS_TOAST:
@@ -251,6 +255,183 @@ class MonitorCore:
             self.items.clear()
             self.item_keys.clear()
         self._broadcast("cleared", {})
+
+    # ---------- 我的评论 ----------
+    # 自己账号（config.json 的 my_uid）的全部历史评论。和监控轮询完全独立：点「同步」才起一条临时线程翻 myreply 接口，
+    # 线程自己开一条写连接、翻完即关；页面读取走 HTTP 线程的短连接。进度通过 ("my_sync", {...}) 广播。
+    def _init_my_sync(self):
+        self._my_lock = threading.Lock()
+        self._my_cancel = None
+        self._my_delay = MY_SYNC_DELAY
+        self._my_sync = {"running": False, "uid": "", "page": 0, "added": 0, "text": "", "error": "", "done_at": ""}
+
+    def _my_db(self):
+        return monitor.get_db()
+
+    def _fetch_my_page(self, uid, page):
+        return monitor.parse_my_replies(uid, page)
+
+    def get_my_uid(self):
+        try:
+            cfg = monitor.load_config()
+        except Exception:
+            return ""
+        return str(cfg.get("my_uid") or "").strip()
+
+    def set_my_uid(self, uid):
+        try:
+            cfg = monitor.load_config()
+        except Exception as e:
+            return "读取 config.json 失败：%s" % e
+        cfg["my_uid"] = uid
+        try:
+            monitor.save_config(cfg)
+        except Exception as e:
+            return "保存 config.json 失败：%s" % e
+        return None
+
+    def my_sync_state(self):
+        with self._my_lock:
+            return dict(self._my_sync)
+
+    def _set_my_sync(self, **kw):
+        with self._my_lock:
+            self._my_sync.update(kw)
+            snap = dict(self._my_sync)
+        self._broadcast("my_sync", snap)
+
+    def my_replies(self, uid, keyword="", target="", before_time="", before_key="", limit=50):
+        """页面读取。没带游标（第一页）时顺带给总数、筛选后条数、回复对象排行、时间跨度和同步元信息。"""
+        db = self._my_db()
+        try:
+            items = monitor.query_my_replies(db, uid, keyword, target, before_time, before_key, limit)
+            res = {"items": items, "has_more": len(items) >= limit}
+            if not before_time:
+                total = monitor.count_my_replies(db, uid)
+                res["total"] = total
+                res["matched"] = monitor.count_my_replies(db, uid, keyword, target) if (keyword or target) else total
+                res["targets"] = monitor.my_reply_targets(db, uid)
+                res["range"] = list(monitor.my_reply_range(db, uid))
+                meta = monitor.load_my_meta(db, uid)
+                res["meta"] = {k: meta[k] for k in ("nickname", "complete", "last_sync", "last_error")}
+            return res
+        finally:
+            db.close()
+
+    def start_my_sync(self, uid, full=False):
+        """起同步线程。返回 None 表示已开始，否则返回错误文案。"""
+        with self._my_lock:
+            if self._my_sync.get("running"):
+                return "已经在同步了"
+            cancel = self._my_cancel = threading.Event()
+            self._my_sync = {"running": True, "uid": uid, "page": 0, "added": 0, "text": "准备中…",
+                             "error": "", "done_at": ""}
+        self._broadcast("my_sync", self.my_sync_state())
+        threading.Thread(target=self._my_sync_run, args=(uid, bool(full), cancel), daemon=True).start()
+        return None
+
+    def cancel_my_sync(self):
+        with self._my_lock:
+            ev = self._my_cancel
+        if ev:
+            ev.set()
+
+    def _my_sync_run(self, uid, full, cancel):
+        """翻页策略：
+        - 库里已经有这个 UID 的数据：先从第 1 页往后补，碰到存过的评论就说明追上了（阶段一）；
+        - 从没翻到过最后一页（首次、上次中途失败/停止），或者用户点了「全量重新同步」：一路翻到空页为止（阶段二）。
+          上次停在第 N 页的话从 N-1 页接着翻——期间新发的评论只会把老评论往后挤，从原页码开始不会漏，
+          往前多退一页是给"自己删了几条评论让后面的往前挪"留的余量。重复的由 INSERT OR IGNORE 吃掉。"""
+        added = 0
+        err = ""
+        reached_end = False
+        state = {"pages": 0}
+        try:
+            db = self._my_db()
+        except Exception as e:
+            self._set_my_sync(running=False, error="数据库打开失败：%s" % e, text="",
+                              done_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            return
+        meta = monitor.load_my_meta(db, uid)
+
+        def fetch(page):
+            """取一页，失败重试两次。被取消返回 None；翻到头返回 []。"""
+            if state["pages"] and cancel.wait(random.uniform(*self._my_delay)):
+                return None
+            for attempt in range(3):
+                try:
+                    recs, nick = self._fetch_my_page(uid, page)
+                    break
+                except Exception as e:
+                    if attempt == 2:
+                        raise RuntimeError("第 %d 页请求失败：%s" % (page, e))
+                    wait = MY_SYNC_RETRY_WAIT[attempt]
+                    self._set_my_sync(text="第 %d 页请求失败，%d 秒后重试（%s）" % (page, wait, e))
+                    if cancel.wait(wait):
+                        return None
+            state["pages"] += 1
+            if nick:
+                meta["nickname"] = nick
+            return recs
+
+        def progress(page):
+            self._set_my_sync(page=page, added=added, text="已翻到第 %d 页 · 新增 %d 条" % (page, added))
+
+        try:
+            page = 1
+            if not full and monitor.count_my_replies(db, uid) > 0:
+                while state["pages"] < MY_SYNC_MAX_PAGES:           # 阶段一：补最新的
+                    recs = fetch(page)
+                    if recs is None:
+                        break
+                    if not recs:
+                        reached_end = True
+                        break
+                    n = monitor.save_my_replies(db, uid, recs)
+                    added += n
+                    progress(page)
+                    if n < len(recs):
+                        break
+                    page += 1
+                page = max(page + 1, int(meta.get("next_page") or 1) - 1)
+                skip_full = bool(meta.get("complete")) or reached_end
+            else:
+                skip_full = False
+            while not skip_full and not reached_end and not cancel.is_set() \
+                    and state["pages"] < MY_SYNC_MAX_PAGES:           # 阶段二：一路翻到底
+                recs = fetch(page)
+                if recs is None:
+                    break
+                if not recs:
+                    reached_end = True
+                    break
+                added += monitor.save_my_replies(db, uid, recs)
+                meta["next_page"] = page + 1
+                monitor.save_my_meta(db, meta)                         # 每页都记一下，中途崩了下次能接着翻
+                progress(page)
+                page += 1
+            if reached_end:
+                meta["complete"] = 1
+                meta["next_page"] = 1
+        except Exception as e:
+            err = str(e)
+        finally:
+            meta["last_sync"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            meta["last_error"] = err
+            try:
+                monitor.save_my_meta(db, meta)
+            except Exception:
+                pass
+            db.close()
+        if err:
+            text = "同步中断：%s（已新增 %d 条，再点一次会接着翻）" % (err, added)
+        elif cancel.is_set():
+            text = "已停止（新增 %d 条，再点一次会接着翻）" % added
+        elif state["pages"] >= MY_SYNC_MAX_PAGES and not reached_end and not meta.get("complete"):
+            text = "本次翻了 %d 页先停下（新增 %d 条），再点一次会接着翻" % (state["pages"], added)
+        else:
+            text = "同步完成，新增 %d 条" % added
+        self._set_my_sync(running=False, added=added, error=err, text=text, done_at=meta["last_sync"])
 
     # ---------- AI 日报（HTTP 线程调用，都是独立短连接） ----------
     def load_day(self, name, date):

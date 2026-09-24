@@ -6,11 +6,15 @@
 再起一个线程每隔几秒随机推一条"新动态"事件——专门用来离线验证前端渲染和 SSE 流程。
 示例文案和 docs/web-mock.html 视觉稿是同一份，日期按"今天"相对偏移，保证日期分组永远有今天/昨天/前天。
 """
+import os
 import random
+import sqlite3
+import tempfile
 import threading
 from datetime import datetime, timedelta
 
 import core
+import monitor
 
 USERS = [
     {"uid": "6112353845000000", "name": "股海老船长", "color": "#1772B4", "check_appends": True, "group": "游资"},
@@ -104,6 +108,11 @@ class MockCore(core.MonitorCore):
         self.last_check = ""
         self.interval = interval
         self._seq = 0
+        self._init_my_sync()
+        self._my_delay = (0.3, 0.6)   # 演示时翻页快一点
+        self._my_uid = ""
+        # 「我的评论」走真的 SQL（monitor.query_my_replies 等），只是库放临时文件、不碰 messages.db，进程退出即丢
+        self._my_db_path = os.path.join(tempfile.mkdtemp(prefix="diting-mock-"), "my.db")
         self.refresh_config_maps()
 
     def refresh_config_maps(self):
@@ -138,6 +147,51 @@ class MockCore(core.MonitorCore):
     def save_ai_config(self, ai):
         self._ai = ai
         return None
+
+    # 我的评论：UID 放内存，数据库是临时文件，抓取换成 _my_pages() 造的假分页
+    def get_my_uid(self):
+        return self._my_uid
+
+    def set_my_uid(self, uid):
+        self._my_uid = uid
+        return None
+
+    def _my_db(self):
+        conn = sqlite3.connect(self._my_db_path)
+        monitor.ensure_my_tables(conn)
+        return conn
+
+    def _fetch_my_page(self, uid, page):
+        pages = self._my_pages()
+        return (pages[page - 1] if page <= len(pages) else []), "我自己_" + uid[-4:]
+
+    def _my_pages(self):
+        """假的 myreply 分页：往前一周多共 300 条评论，每页 20 条、最新在前。一半是回复别人的评论，一半直接评论帖子。"""
+        if not hasattr(self, "_my_pages_cache"):
+            rnd = random.Random(7)
+            people = ["股友511E316c18", "价值老韭菜", "半仓过节", "量化小张", "打板小王子", "茅台信徒", "北向观察员"]
+            asks = ["这票还能拿吗？", "储能这块的增速能持续吗？看到有券商说明年会放缓", "今天为什么跳水？",
+                    "楼主仓位多少？", "光模块是不是见顶了", "业绩预告出来了，怎么看"]
+            answers = ["能拿，逻辑没变，别被日内波动吓到。", "短期看量能，站不上 5 日线就先减一点。",
+                       "我的看法是估值已经 price in 了，追高不划算。\n等回踩再说。", "三成仓，不加不减。",
+                       "别听消息，看订单。$中际旭创(SZ300308)$ 的订单能见度到明年二季度。", "同意，这个位置性价比一般。"]
+            rows = []
+            now = datetime.now()
+            for i in range(300):
+                t = now - timedelta(minutes=37 * i + rnd.randint(0, 30))
+                bar = rnd.choice(list(_BAR_CODES))
+                post_user = rnd.choice(people)
+                sub = rnd.random() < 0.5
+                to_user = rnd.choice([p for p in people if p != post_user]) if sub else ""
+                rows.append({
+                    "key": "RMY%05d" % i, "time": t.strftime("%Y-%m-%d %H:%M:%S"),
+                    "content": rnd.choice(answers), "bar": bar, "code": _BAR_CODES[bar],
+                    "post_id": str(900000 + i), "post_title": "%s %s" % (bar, rnd.choice(["今天怎么看", "三季报点评", "明天会怎么走"])),
+                    "post_user": post_user, "to_user": to_user, "to_text": rnd.choice(asks) if sub else "",
+                    "link": "https://guba.eastmoney.com/news,%s,%d.html" % (_BAR_CODES[bar], 900000 + i),
+                })
+            self._my_pages_cache = [rows[i:i + 20] for i in range(0, len(rows), 20)]
+        return self._my_pages_cache
 
     def db_count(self):
         return len(self.items) + len(self._older())

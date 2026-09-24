@@ -254,6 +254,8 @@ my_stop = self.stop_event                # 新线程只认这个局部引用
 | GET/POST | `/api/ai/settings` | AI 接口配置（`config.json` 的 `ai` 字段）；GET 只给脱敏 key，POST 不带 key 表示沿用旧的 |
 | POST | `/api/ai/test` | 「测试连接」 |
 | GET/POST | `/api/ai/summary` | AI 日报：GET 读缓存 + 当前条数，POST 生成（`force` 强制重生成）。见 §8.1 |
+| GET | `/api/my/replies?q=&to=&before=&before_key=&limit=50` | 「我的评论」：只读本地 `my_replies` 表，按 `(time, key)` 倒序翻页；第一页附带 `total` / `matched` / `targets`（回复对象排行）/ `range` / `meta`。见 §8.2 |
+| POST | `/api/my/sync` | `{uid}` 设置自己的 UID 并开始同步；`{}` 同步最新；`{full: true}` 全量重翻；`{cancel: true}` 停止 |
 
 ### 8.1 AI 日报（`summary.py`）
 
@@ -276,6 +278,16 @@ server 层：缓存表 `summaries(name, date) → text/model/created_at/item_cou
 - 端口被占自动 +1（最多试 20 个）。`run_gui.bat` 用 `pythonw` 启动没有控制台，所以顶层 `__main__` 兜底把 traceback 写进 `server_error.log`。
 - `mock_data.MockCore` **故意不调父类 `__init__`**（父类会读 `config.json` / `messages.db`），只搭骨架后覆写数据源；订阅/广播/接口和真 core 一模一样。
 
+### 8.2 我的评论（`my_replies` 表）
+
+自己账号的全部历史评论，UID 存 `config.json` 的 `my_uid`。和监控轮询**完全独立**：
+
+- **抓取**：`monitor.parse_my_replies(uid, page)` 打的是同一个 `myreply` 接口，但不归一成统一 item，而是返回拆开的字段（`MY_REPLY_COLS`）：`to_user/to_text`（回复别人的评论时才有）、`post_user/post_title`（所在帖子）、`bar/code/link`，正文**保留换行**。「回复对象」= `COALESCE(NULLIF(to_user,''), post_user)`，按它做筛选和排行。
+- **同步线程**：`core.start_my_sync()` 起一条临时 daemon 线程 `_my_sync_run`，自己开写连接、翻完即关（和 `_run_loop` 那条写连接互不相干，SQLite 自己的锁够用）。翻页间隔 `MY_SYNC_DELAY`，单页失败重试两次，单次最多 `MY_SYNC_MAX_PAGES` 页。两个阶段：库里已有数据时先从第 1 页补到「碰到存过的评论」；从没翻到过空页（`my_sync_meta.complete=0`）或点了「全量重翻」时再一路翻到空页，每页把 `next_page` 落盘，下次从 `next_page - 1` 接着翻——新评论只会把老评论往后挤，从原页码开始不会漏，退一页是给「自己删了评论让后面往前挪」留余量。重复靠 `INSERT OR IGNORE` 吃掉。
+- **进度**：`_set_my_sync()` 广播 `("my_sync", {...})`，前端 `MineView` 每翻完一页刷新一次第一页（本地库，便宜），跑完再刷一次。GET 响应里也带一份 `sync`，但收到过 SSE 事件后以事件为准，防止晚到的 GET 把「已完成」盖回「进行中」。
+- **Mock**：`MockCore` 覆写 `get_my_uid/set_my_uid`（内存）、`_my_db`（临时文件 SQLite）和 `_fetch_my_page`（15 页假数据），SQL 和同步逻辑都是真的。
+- 前端：顶栏「我的」（窄屏收进 ⋯ 菜单）切到 `view === "mine"`，最新在上（和动态列表相反），「加载更多」在底部。
+
 ---
 
 ## 9. 网页版前端（`web/`）
@@ -294,7 +306,7 @@ React 18 + htm，单文件 `web/app.js`（约 1060 行），所有状态在一�
 | `config` | `config` | 用户列表 + 分组表（侧栏 / 设置抽屉） |
 | `cleared` | `cleared` | 清空列表 |
 
-本地 UI 状态：`drawer` / `menu` / `theme` / `rail`（侧栏收起）/ `dense`（紧凑模式）/ `sound` / `query` / `searchDb` / `filter{user, group, kindOff}`（`user` 与 `group` 互斥，选一个就清另一个；`group` 取 `UNGROUPED` 常量表示"只看未分组"）/ `groupFold`（侧栏被收起的组名）/ `toggled`（日期折叠）/ `newKeys` / `pendingBelow` / `unread` / `firstUnreadKey`。
+本地 UI 状态：`view`（`feed` / `summary` / `mine`，存 `diting.view`）/ `drawer` / `menu` / `theme` / `rail`（侧栏收起）/ `dense`（紧凑模式）/ `sound` / `query` / `searchDb` / `filter{user, group, kindOff}`（`user` 与 `group` 互斥，选一个就清另一个；`group` 取 `UNGROUPED` 常量表示"只看未分组"）/ `groupFold`（侧栏被收起的组名）/ `toggled`（日期折叠）/ `newKeys` / `pendingBelow` / `unread` / `firstUnreadKey`。
 
 按组筛选靠 `groupOfUser`（用户名 → 组名）判断条目归属，`onNew` 里走 `groupOfRef` 拿最新值（同 `filterRef` 的理由）。侧栏没有任何分组时退化成平铺列表；有分组时按 `s.groups` 顺序收纳，未分组用户放最后一桶。
 
@@ -335,6 +347,7 @@ React 18 + htm，单文件 `web/app.js`（约 1060 行），所有状态在一�
 8. 「退出程序」按钮（关标签页进程不会退出，必须有出口）
 9. 深色模式（默认跟随系统）、侧栏可收缩成窄轨、竖屏三档响应式断点、标签页标题未读数
 10. 用户分组：设置抽屉里建组 / 改名 / 排序 / 设组色 / 给用户选组，侧栏按组收纳、可折叠、点组头「只看本组」
+11. 我的评论：同步自己账号的全部历史评论（含回复给谁、被回复的原话），按回复对象筛选、全文搜索
 
 ---
 

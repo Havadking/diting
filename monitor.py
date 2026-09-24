@@ -127,8 +127,117 @@ def get_db():
         text TEXT,
         PRIMARY KEY (name, date)
     )""")
+    ensure_my_tables(conn)
     conn.commit()
     return conn
+
+
+# ---------- 「我的评论」：自己账号的全部历史评论（与监控列表无关，单独一张表） ----------
+# 跟 messages 不同，这里存的是拆开的原始字段：被回复的人/原话、帖主、帖子标题都单独成列，页面按「回复对象」筛选要用。
+# 一行 = 一条评论；主键带 uid，换了 UID 同步时两个账号的数据互不覆盖。
+MY_REPLY_COLS = ["key", "uid", "time", "content", "bar", "code", "post_id", "post_title", "post_user",
+                 "to_user", "to_text", "link"]
+# 「回复对象」：回复别人的评论时是那条评论的作者，直接评论帖子时是帖主
+_MY_TARGET = "COALESCE(NULLIF(to_user, ''), post_user)"
+
+
+def ensure_my_tables(conn):
+    conn.execute("""CREATE TABLE IF NOT EXISTS my_replies (
+        key TEXT NOT NULL,
+        uid TEXT NOT NULL,
+        time TEXT NOT NULL,
+        content TEXT,
+        bar TEXT,
+        code TEXT,
+        post_id TEXT,
+        post_title TEXT,
+        post_user TEXT,
+        to_user TEXT,
+        to_text TEXT,
+        link TEXT,
+        saved_at TEXT NOT NULL,
+        PRIMARY KEY (uid, key)
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_my_replies_time ON my_replies(uid, time)")
+    # 同步进度：complete=1 表示曾经一路翻到过最后一页；next_page 是上次没翻完时停在哪一页，下次从附近接着翻
+    conn.execute("""CREATE TABLE IF NOT EXISTS my_sync_meta (
+        uid TEXT PRIMARY KEY,
+        nickname TEXT,
+        complete INTEGER NOT NULL DEFAULT 0,
+        next_page INTEGER NOT NULL DEFAULT 1,
+        last_sync TEXT,
+        last_error TEXT
+    )""")
+
+
+def save_my_replies(conn, uid, records):
+    """INSERT OR IGNORE 一批，返回真正新插入的条数（同步靠它判断"已经补到上次存过的位置"）。"""
+    before = conn.total_changes
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn.executemany(
+        "INSERT OR IGNORE INTO my_replies (" + ", ".join(MY_REPLY_COLS) + ", saved_at) "
+        "VALUES (" + ", ".join("?" * (len(MY_REPLY_COLS) + 1)) + ")",
+        [tuple(str(uid) if c == "uid" else (r.get(c) or "") for c in MY_REPLY_COLS) + (now,) for r in records])
+    conn.commit()
+    return conn.total_changes - before
+
+
+def _my_where(uid, keyword="", target=""):
+    where, args = ["uid = ?"], [str(uid)]
+    kw = (keyword or "").strip()
+    if kw:
+        pat = "%" + kw + "%"
+        where.append("(content LIKE ? OR post_title LIKE ? OR to_text LIKE ? OR to_user LIKE ? OR post_user LIKE ? OR bar LIKE ?)")
+        args += [pat] * 6
+    if target:
+        where.append(_MY_TARGET + " = ?")
+        args.append(target)
+    return where, args
+
+
+def query_my_replies(conn, uid, keyword="", target="", before_time="", before_key="", limit=50):
+    """按时间倒序（最新在前）翻页，游标同 load_messages_before 用 (time, key) 二元组。
+    keyword 在正文/帖子标题/被回复原话/对象/吧名里 LIKE；target 精确匹配「回复对象」。"""
+    where, args = _my_where(uid, keyword, target)
+    if before_time:
+        where.append("(time < ? OR (time = ? AND key < ?))")
+        args += [before_time, before_time, before_key or "\uffff"]
+    cur = conn.execute("SELECT " + ", ".join(MY_REPLY_COLS) + " FROM my_replies WHERE " + " AND ".join(where)
+                       + " ORDER BY time DESC, key DESC LIMIT ?", args + [limit])
+    return [{k: (v if v is not None else "") for k, v in zip(MY_REPLY_COLS, r)} for r in cur.fetchall()]
+
+
+def count_my_replies(conn, uid, keyword="", target=""):
+    where, args = _my_where(uid, keyword, target)
+    return conn.execute("SELECT COUNT(*) FROM my_replies WHERE " + " AND ".join(where), args).fetchone()[0]
+
+
+def my_reply_targets(conn, uid, limit=40):
+    """回复得最多的对象，给页面顶部的筛选条用：[{"name", "count"}]，按条数降序。"""
+    cur = conn.execute("SELECT " + _MY_TARGET + " AS t, COUNT(*) AS n FROM my_replies WHERE uid = ? AND " + _MY_TARGET + " != '' "
+                       "GROUP BY t ORDER BY n DESC, MAX(time) DESC LIMIT ?", (str(uid), limit))
+    return [{"name": r[0], "count": r[1]} for r in cur.fetchall()]
+
+
+def my_reply_range(conn, uid):
+    """(最早, 最新) 两条评论的时间，没有数据时是 ("", "")。"""
+    row = conn.execute("SELECT MIN(time), MAX(time) FROM my_replies WHERE uid = ?", (str(uid),)).fetchone()
+    return (row[0] or "", row[1] or "")
+
+
+MY_META_COLS = ["uid", "nickname", "complete", "next_page", "last_sync", "last_error"]
+
+
+def load_my_meta(conn, uid):
+    row = conn.execute("SELECT " + ", ".join(MY_META_COLS) + " FROM my_sync_meta WHERE uid = ?", (str(uid),)).fetchone()
+    return dict(zip(MY_META_COLS, row)) if row else {"uid": str(uid), "nickname": "", "complete": 0, "next_page": 1,
+                                                      "last_sync": "", "last_error": ""}
+
+
+def save_my_meta(conn, meta):
+    conn.execute("INSERT OR REPLACE INTO my_sync_meta (" + ", ".join(MY_META_COLS) + ") VALUES (?, ?, ?, ?, ?, ?)",
+                 tuple(meta.get(c) for c in MY_META_COLS))
+    conn.commit()
 
 
 def _rows_to_dicts(cur):
@@ -304,6 +413,36 @@ def parse_replies(uid, page=1):
             "quote_text": quote_text,
         })
     return items
+
+
+def parse_my_replies(uid, page=1):
+    """「我的评论」页用：同一个 myreply 接口，但不归一成统一 item，而是把帖主、被回复的人和原话拆成单独字段
+    （见 MY_REPLY_COLS）。正文保留换行。返回 (records, 昵称)；records 为空表示翻到头了。"""
+    data = fetch_json(REPLY_API % (uid, page), uid)
+    records, nick = [], ""
+    for r in get_list(data):
+        rid = str(r.get("reply_id") or "")
+        if not rid:
+            continue
+        nick = nick or r.get("reply_user_nickname") or r.get("reply_user_name") or ""
+        guba = r.get("reply_guba") or {}
+        code = guba.get("stockbar_code") or ""
+        src_post = str(r.get("source_post_id") or "")
+        is_sub = bool(r.get("source_reply_id"))   # 回复的是别人的评论（而不是直接评论帖子）
+        records.append({
+            "key": "R" + rid,
+            "time": r.get("reply_publish_time") or "",
+            "content": (r.get("reply_text") or "").strip(),
+            "bar": guba.get("stockbar_name") or "",
+            "code": code,
+            "post_id": src_post,
+            "post_title": (r.get("source_post_title") or "").strip(),
+            "post_user": (r.get("source_post_user_nickname") or "").strip(),
+            "to_user": (r.get("source_reply_user_nickname") or "").strip() if is_sub else "",
+            "to_text": (r.get("source_reply_text") or "").strip() if is_sub else "",
+            "link": make_link(code, src_post),
+        })
+    return records, nick
 
 
 def probe_guba_user(uid):
