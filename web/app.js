@@ -789,17 +789,24 @@
     const [rec, setRec] = useState(null);         // 缓存的/刚生成的日报
     const [count, setCount] = useState(null);     // 当天当前有效条数
     const [done, setDone] = useState(() => new Set());   // 当天已经生成过日报的博主
-    const [busy, setBusy] = useState(false);
-    const [elapsed, setElapsed] = useState(0);    // 生成中已等待秒数：思考模式下跑几分钟很正常，得让人看出没卡死
+    // 生成中的任务按「博主|日期」记开始时间：切到别人/别的日期时按钮和等待提示跟着换，原来那个照常在后台跑完
+    const [pending, setPending] = useState({});
+    const [now, setNow] = useState(Date.now);     // 生成中已等待秒数：思考模式下跑几分钟很正常，得让人看出没卡死
     const [err, setErr] = useState("");
     const seq = useRef(0);
+    const viewKey = who + "|" + date;
+    const viewRef = useRef(viewKey);
+    viewRef.current = viewKey;
+    const busy = !!pending[viewKey];
+    const elapsed = busy ? Math.max(0, Math.floor((now - pending[viewKey]) / 1000)) : 0;
+    const anyPending = Object.keys(pending).length > 0;
 
     useEffect(() => {
-      if (!busy) { setElapsed(0); return; }
-      const t0 = Date.now();
-      const id = setInterval(() => setElapsed(Math.floor((Date.now() - t0) / 1000)), 1000);
+      if (!anyPending) return;
+      setNow(Date.now());
+      const id = setInterval(() => setNow(Date.now()), 1000);
       return () => clearInterval(id);
-    }, [busy]);
+    }, [anyPending]);
 
     useEffect(() => { if (!who && users[0]) setWho(users[0].name); }, [users]);
 
@@ -816,19 +823,25 @@
     }, [who, date, aiVersion]);
 
     const gen = async (force) => {
-      if (!who) return;
-      const my = ++seq.current;
-      setBusy(true); setErr("");
+      if (!who || pending[viewKey]) return;
+      const name = who, day = date, key = viewKey;
+      setPending(p => ({ ...p, [key]: Date.now() }));
+      setErr("");
       try {
-        const d = await post("/api/ai/summary", { name: who, date, force: !!force });
-        if (my !== seq.current) return;
-        setRec(d.summary);
-        setCount(d.summary.item_count);
-        setDone(prev => new Set([...prev, who]));
-        if (!d.cached) toast("日报已生成");
+        const d = await post("/api/ai/summary", { name, date: day, force: !!force });
+        if (viewRef.current === key) {
+          ++seq.current;   // 作废这期间切回来时发出的缓存查询，免得它晚到把刚生成的盖掉
+          setRec(d.summary);
+          setCount(d.summary.item_count);
+        }
+        if (viewRef.current.endsWith("|" + day)) setDone(prev => new Set([...prev, name]));
+        if (!d.cached) toast(viewRef.current === key ? "日报已生成" : `${name} ${day} 的日报已生成`);
       } catch (e) {
-        if (my === seq.current) setErr(e.message);
-      } finally { setBusy(false); }
+        if (viewRef.current === key) setErr(e.message);
+        else toast(`${name} ${day} 的日报生成失败：${e.message}`, "error");
+      } finally {
+        setPending(p => { const n = { ...p }; delete n[key]; return n; });
+      }
     };
 
     const stale = rec && count !== null && count > (rec.item_count || 0);
