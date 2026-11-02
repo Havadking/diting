@@ -310,14 +310,14 @@ React 18 + htm，单文件 `web/app.js`（约 1060 行），所有状态在一�
 
 按组筛选靠 `groupOfUser`（用户名 → 组名）判断条目归属，`onNew` 里走 `groupOfRef` 拿最新值（同 `filterRef` 的理由）。侧栏没有任何分组时退化成平铺列表；有分组时按 `s.groups` 顺序收纳，未分组用户放最后一桶。
 
-`localStorage` 键：`diting.rail` / `diting.theme`（`system|light|dark`）/ `diting.filter` / `diting.groupFold` / `diting.collapsed`（**只记非今天**）/ `diting.dense` / `diting.sound`。读写都经 `store` 小工具包了 `try/catch`（隐私窗口下 accessor 会抛）。
+`localStorage` 键：`diting.rail` / `diting.theme`（`system|light|dark`）/ `diting.filter` / `diting.groupFold` / `diting.collapsed`（**只记非今天**）/ `diting.dense` / `diting.sound` / `diting.soundName`（默认音色 id）/ `diting.soundVol`（0–100）。读写都经 `store` 小工具包了 `try/catch`（隐私窗口下 accessor 会抛）。
 
 ### 9.3 几个"看起来可以优化、其实不能动"的点
 
 - **跟随滚动用 `useLayoutEffect` + `followRef`，不用 `requestAnimationFrame`**——后台标签页不跑 rAF，切回来才追，体验像卡住。
 - **「加载更早」用 `scroll` 事件而不是 `IntersectionObserver`**——同理，后台标签页里 IO 不触发。
 - 新动态到达时**走 `filterRef` / `soundRef` / `usersRef` 拿最新值**，避免把 `filter` 放进 SSE effect 的依赖里导致反复重连。
-- `onNew` 里的声音只在「页面不可见或没焦点」且该用户**没被静音**时响（Web Audio API 现场合成正弦波 880→1760Hz，**绝不引入音频文件**，保证离线与零体积）。
+- `onNew` 里的声音只在「页面不可见或没焦点」且该用户**没被静音**时响（Web Audio API 现场合成，音色表是 `app.js` 顶部的 `SOUNDS`，**绝不引入音频文件**，保证离线与零体积）。一批新动态只响一声，用第一条没静音的动态作者在 `config.json` 里的 `sound`（`list_users()` 回传，`update_all` 写回，后端只校验是短字母串、不认具体取值），没设就用浏览器里的默认音色；音量是全局的。
 - 首屏加载完滚到底（最新在最下面，和 tkinter 版习惯一致），并且 `document.fonts.ready` 后**再补滚一次**（字体晚到会撑高内容）。
 
 ### 9.4 视觉规范（两个正交维度）

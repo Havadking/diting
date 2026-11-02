@@ -61,26 +61,48 @@
     volumeX: svg('<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>'),
   };
 
-  let audioCtx = null;
-  function playDing(volume = 0.5) {
+  // 提示音全部用 Web Audio 现场合成，绝不引入音频文件（离线、零体积）。
+  // 每个音色是若干个音符 [波形, 起始频率, 结束频率, 起始秒, 时长, 峰值]，峰值按「音量 100% 时」设计
+  const SOUNDS = [
+    ["ding", "清脆", [["sine", 880, 1760, 0, 0.3, 0.9]]],
+    ["double", "双响", [["sine", 1047, 1047, 0, 0.18, 0.8], ["sine", 1319, 1319, 0.15, 0.3, 0.8]]],
+    ["chime", "三连音", [["triangle", 1047, 1047, 0, 0.35, 0.9], ["triangle", 1319, 1319, 0.1, 0.35, 0.9], ["triangle", 1568, 1568, 0.2, 0.5, 0.9]]],
+    ["bell", "铜铃", [["sine", 660, 660, 0, 1.4, 0.7], ["sine", 1822, 1822, 0, 0.8, 0.3], ["sine", 3300, 3300, 0, 0.4, 0.15]]],
+    ["coin", "金币", [["square", 988, 988, 0, 0.09, 0.35], ["square", 1319, 1319, 0.08, 0.4, 0.35]]],
+    ["drop", "水滴", [["sine", 1400, 320, 0, 0.18, 1]]],
+    ["alert", "警报", [["square", 880, 880, 0, 0.14, 0.35], ["square", 660, 660, 0.15, 0.14, 0.35], ["square", 880, 880, 0.3, 0.14, 0.35], ["square", 660, 660, 0.45, 0.2, 0.35]]],
+  ];
+  const SOUND_IDS = SOUNDS.map(x => x[0]);
+  let audioCtx = null, audioOut = null;
+  function playSound(name = "ding", volume = 0.8) {
     try {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       if (!AudioContext) return;
-      if (!audioCtx) audioCtx = new AudioContext();
+      if (!audioCtx) {
+        audioCtx = new AudioContext();
+        // 压缩器兜底：多个音符叠加、音量拉满时不爆音
+        audioOut = audioCtx.createDynamicsCompressor();
+        audioOut.connect(audioCtx.destination);
+      }
       if (audioCtx.state === "suspended") audioCtx.resume();
-      const now = audioCtx.currentTime;
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      osc.type = "sine";
-      osc.frequency.setValueAtTime(880, now);
-      osc.frequency.exponentialRampToValueAtTime(1760, now + 0.08);
+      const notes = (SOUNDS.find(x => x[0] === name) || SOUNDS[0])[2];
       const vol = Math.max(0, Math.min(1, volume));
-      gain.gain.setValueAtTime(vol * 0.4, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
-      osc.connect(gain);
-      gain.connect(audioCtx.destination);
-      osc.start(now);
-      osc.stop(now + 0.3);
+      if (!vol) return;
+      const now = audioCtx.currentTime;
+      for (const [type, f0, f1, t, dur, peak] of notes) {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(f0, now + t);
+        if (f1 !== f0) osc.frequency.exponentialRampToValueAtTime(f1, now + t + Math.min(0.12, dur * 0.6));
+        gain.gain.setValueAtTime(0.0001, now + t);
+        gain.gain.linearRampToValueAtTime(peak * vol, now + t + 0.005);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + t + dur);
+        osc.connect(gain);
+        gain.connect(audioOut);
+        osc.start(now + t);
+        osc.stop(now + t + dur + 0.02);
+      }
     } catch (e) {}
   }
 
@@ -432,7 +454,7 @@
     return msg ? html`<div class=${"toast" + (msg.kind === "error" ? " error" : "")} role="status">${msg.text}</div>` : null;
   }
 
-  function Drawer({ users, groups, config, sound, onToggleSound, onClose, onSaved, toast }) {
+  function Drawer({ users, groups, config, sound, onToggleSound, soundName, onSoundName, soundVol, onSoundVol, onClose, onSaved, toast }) {
     // 抽屉里编辑的是用户自己选的色（own_color），不是含组色的生效色；生效色只用来预览
     const fromUsers = us => Object.fromEntries(us.map(u => [String(u.uid), { ...u, color: u.own_color || null }]));
     const [pend, setPend] = useState(() => fromUsers(users));
@@ -540,7 +562,8 @@
             color: u.color || null,
             group: u.group || null,
             mute: !!u.mute,
-            check_appends: !!u.check_appends
+            check_appends: !!u.check_appends,
+            sound: u.sound || null
           })),
           groups: pendGroups.map(g => ({ name: g.name.trim(), color: g.color || null })).filter(g => g.name),
           config: {
@@ -624,12 +647,20 @@
                   <input class="uname-edit" value=${p.name} title="点击直接修改备注名"
                          onInput=${e => upd(uidStr, { name: e.target.value })}/>
                   <span>${u.uid}</span>
-                  ${pendGroups.length > 0 && html`
-                    <select class="grp-sel" value=${p.group || ""} title="所属分组"
-                            onChange=${e => upd(uidStr, { group: e.target.value || null })}>
-                      <option value="">未分组</option>
-                      ${pendGroups.map(g => html`<option key=${g.name} value=${g.name}>${g.name}</option>`)}
-                    </select>`}
+                  <div class="who-sels">
+                    ${pendGroups.length > 0 && html`
+                      <select class="grp-sel" value=${p.group || ""} title="所属分组"
+                              onChange=${e => upd(uidStr, { group: e.target.value || null })}>
+                        <option value="">未分组</option>
+                        ${pendGroups.map(g => html`<option key=${g.name} value=${g.name}>${g.name}</option>`)}
+                      </select>`}
+                    <select class="grp-sel snd-sel" value=${p.sound || ""} disabled=${p.mute}
+                            title=${p.mute ? "已静音，不响" : "该用户的提示音（选中即试听）"}
+                            onChange=${e => { const v = e.target.value || null; upd(uidStr, { sound: v }); playSound(v || soundName, soundVol / 100); }}>
+                      <option value="">默认音</option>
+                      ${SOUNDS.map(([id, nm]) => html`<option key=${id} value=${id}>${nm}</option>`)}
+                    </select>
+                  </div>
                 </div>
                 <div class="swatches">
                   <button class=${"swatch none" + (!p.color ? " on" : "")} title=${gc ? "不单独选色，跟随分组的组色" : "默认（按类型配色）"}
@@ -659,10 +690,25 @@
           <div class="cfg-row" style=${{ marginTop: "10px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <label style=${{ display: "inline-flex", alignItems: "center", gap: "6px", cursor: "pointer" }}>
               <input type="checkbox" checked=${sound} onChange=${e => onToggleSound && onToggleSound(e.target.checked)}/>
-              <span>后台盯盘声音提示（清脆音）</span>
+              <span>后台盯盘声音提示</span>
             </label>
-            <button class="btn quiet" style=${{ padding: "3px 10px", fontSize: "12px" }} onClick=${() => playDing(0.6)}>${I.volume} 试听</button>
+            <button class="btn quiet" style=${{ padding: "3px 10px", fontSize: "12px" }} onClick=${() => playSound(soundName, soundVol / 100)}>${I.volume} 试听</button>
           </div>
+          <div class="cfg-row snd-row">
+            <label>默认音:
+              <select class="grp-sel" value=${soundName}
+                      onChange=${e => { onSoundName(e.target.value); playSound(e.target.value, soundVol / 100); }}>
+                ${SOUNDS.map(([id, nm]) => html`<option key=${id} value=${id}>${nm}</option>`)}
+              </select>
+            </label>
+            <label class="vol">音量:
+              <input type="range" min="0" max="100" step="5" value=${soundVol}
+                     onInput=${e => onSoundVol(Number(e.target.value))}
+                     onChange=${e => playSound(soundName, Number(e.target.value) / 100)}/>
+              <b>${soundVol}%</b>
+            </label>
+          </div>
+          <p class="hint">声音只在页面处于后台或窗口没焦点时响；用户行里可单独指定提示音，「默认音」即跟随上面的设置。默认音和音量只存在本浏览器，每位用户的提示音随「保存设置」写进配置。</p>
         </div>
 
         <footer>
@@ -1212,6 +1258,11 @@
     useEffect(() => store.set("diting.sound", sound), [sound]);
     const toggleSound = () => setSound(s => !s);
     const soundRef = useRef(sound); soundRef.current = sound;
+    const [soundName, setSoundName] = useState(() => { const v = store.get("diting.soundName", "ding"); return SOUND_IDS.includes(v) ? v : "ding"; });
+    useEffect(() => store.set("diting.soundName", soundName), [soundName]);
+    const [soundVol, setSoundVol] = useState(() => { const v = Number(store.get("diting.soundVol", 80)); return v >= 0 && v <= 100 ? v : 80; });
+    useEffect(() => store.set("diting.soundVol", soundVol), [soundVol]);
+    const soundPrefRef = useRef(null); soundPrefRef.current = { name: soundName, vol: soundVol };
     const usersRef = useRef(s.users); usersRef.current = s.users;
 
     const lastSeenKeyRef = useRef(null);
@@ -1398,12 +1449,15 @@
         const isBackground = document.visibilityState !== "visible" || !document.hasFocus();
         if (isBackground) {
           const users = usersRef.current || [];
-          const hasAudible = fresh.some(e => {
+          // 一批里只响一声：取第一条没被静音的动态，用它作者自己的提示音（没设就用默认音）
+          let audible = null;
+          for (const e of fresh) {
             const u = users.find(x => x.name === e.name);
-            return !u || !u.mute;
-          });
-          if (hasAudible) {
-            playDing(0.6);
+            if (!u || !u.mute) { audible = u || {}; break; }
+          }
+          if (audible) {
+            const pref = soundPrefRef.current;
+            playSound(audible.sound || pref.name, pref.vol / 100);
           }
         }
       }
@@ -1704,7 +1758,7 @@
             </button>`}
         </main>
 
-        ${drawer && html`<${Drawer} users=${s.users} groups=${s.groups} config=${s.config} sound=${sound} onToggleSound=${setSound} onClose=${() => setDrawer(false)} onSaved=${() => fetchSnapshot(dispatch).catch(() => {})} toast=${toast}/>`}
+        ${drawer && html`<${Drawer} users=${s.users} groups=${s.groups} config=${s.config} sound=${sound} onToggleSound=${setSound} soundName=${soundName} onSoundName=${setSoundName} soundVol=${soundVol} onSoundVol=${setSoundVol} onClose=${() => setDrawer(false)} onSaved=${() => fetchSnapshot(dispatch).catch(() => {})} toast=${toast}/>`}
         ${aiDrawer && html`<${AiDrawer} onClose=${() => setAiDrawer(false)} toast=${toast} onSaved=${() => setAiVersion(v => v + 1)}/>`}
         <${Toast} msg=${msg}/>
         ${s.quit && html`

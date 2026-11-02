@@ -68,6 +68,12 @@ def toast(title, msg, link=None):
         pass
 
 
+def _clean_sound(v):
+    """用户提示音 id：只收短的字母串（音色表在前端，后端不认具体取值），其它一律当没设。"""
+    v = (v or "").strip() if isinstance(v, str) else ""
+    return v if v.isascii() and v.isalpha() and len(v) <= 20 else ""
+
+
 class MonitorCore:
     def __init__(self):
         self.worker = None
@@ -623,6 +629,12 @@ class MonitorCore:
                             u["group"] = g
                         else:
                             u.pop("group", None)
+                    if "sound" in p:  # 提示音音色 id（前端 SOUNDS 里的），空 = 跟随浏览器里的默认音
+                        snd = _clean_sound(p.get("sound"))
+                        if snd:
+                            u["sound"] = snd
+                        else:
+                            u.pop("sound", None)
                     if i == 0:
                         if p.get("check_appends"):
                             u["check_appends"] = True
@@ -734,6 +746,7 @@ class MonitorCore:
                             "source": src, "color": color, "own_color": u.get("color") or None,
                             "group": u.get("group") or None,
                             "mute": bool(u.get("mute")),
+                            "sound": u.get("sound") or None,
                             "check_appends": bool(u.get("check_appends")) if src == "guba" else None})
         return out
 

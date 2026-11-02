@@ -592,7 +592,7 @@
   .drawer header h3 { margin: 0; font-size: 16px; font-weight: 600; }
   .drawer header p { margin: 2px 0 0; font-size: 12.5px; color: var(--ink-3); }
   .drawer .list { flex: 1; overflow-y: auto; padding: 8px 24px; }
-  .srow { display: grid; grid-template-columns: 150px 1fr auto; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .srow { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line); }
   .srow .who { display: flex; flex-direction: column; gap: 2px; }
   .srow .who b { font-weight: 600; color: var(--uc, var(--ink)); }
   .srow .who span { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
@@ -655,6 +655,16 @@
   .cfg-row { display: flex; gap: 16px; align-items: center; font-size: 12.5px; color: var(--ink-2); flex-wrap: wrap; }
   .cfg-row label { display: inline-flex; align-items: center; gap: 6px; }
   .cfg-row input { width: 68px; }
+  .cfg-row.snd-row { margin-top: 10px; }
+  .snd-row .grp-sel { margin-top: 0; }
+  .snd-row .vol input[type=range] { width: 140px; accent-color: var(--accent); }
+  .snd-row .vol b { font-family: var(--mono); font-weight: 500; min-width: 3.5em; }
+  .cfg-box .hint { margin: 8px 0 0; font-size: 11.5px; color: var(--ink-3); }
+  .toggles { align-items: center; }
+  .srow .swatches { flex-wrap: wrap; }
+  .who-sels { display: flex; gap: 4px; }
+  .who-sels .grp-sel { min-width: 0; flex: 1 1 0; }
+  .snd-sel:disabled { opacity: .45; }
   .btn-del {
     width: 26px; height: 26px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center;
     color: var(--ink-3); transition: color .12s, background .12s; border: none; background: none; cursor: pointer;

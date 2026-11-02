@@ -268,6 +268,9 @@ class MockCore(core.MonitorCore):
                 if "group" in p:
                     if (p.get("group") or "").strip(): u["group"] = p["group"].strip()
                     else: u.pop("group", None)
+                if "sound" in p:
+                    if core._clean_sound(p.get("sound")): u["sound"] = core._clean_sound(p.get("sound"))
+                    else: u.pop("sound", None)
                 if p.get("check_appends"): u["check_appends"] = True
                 else: u.pop("check_appends", None)
             if isinstance(body.get("groups"), list):
@@ -299,7 +302,8 @@ class MockCore(core.MonitorCore):
                  "color": u.get("color") or GROUPS.get(u.get("group") or "") or None,
                  "own_color": u.get("color") or None,
                  "group": u.get("group") or None,
-                 "mute": bool(u.get("mute")), "check_appends": bool(u.get("check_appends"))}
+                 "mute": bool(u.get("mute")), "sound": u.get("sound") or None,
+                 "check_appends": bool(u.get("check_appends"))}
                 for u in USERS]
 
     def list_groups(self):
