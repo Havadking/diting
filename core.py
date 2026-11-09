@@ -3,7 +3,7 @@
 谛听 · 监控核心（无任何 UI 依赖）
 
 从 app.py 的 MonitorApp 抽出来的后台抓取线程 + 数据模型：
-  - 轮询股吧 / 推特 / 微博，按来源做首轮基线与去重
+  - 轮询股吧 / 推特 / 微博 / 同花顺，按来源做首轮基线与去重
   - 帖子追加监视（含失败退避）
   - 静音 / 合并阈值 / Windows 通知
   - 把处理好的展示条目写进 messages.db，并广播给所有订阅者
@@ -38,6 +38,9 @@ MY_SYNC_RETRY_WAIT = (5, 15)  # 单页失败后的重试等待，两次都失败
 # 推特/微博监控功能暂时下线（不抓取、UI 也不显示相关内容），代码保留，改回 True 即可恢复
 ENABLE_TWITTER = False
 ENABLE_WEIBO = False
+# 同花顺社区（只有发帖，不登录只能拿最近 10 条，见 monitor.parse_ths）
+ENABLE_THS = True
+THS_DEFAULT_INTERVAL = 180  # 同花顺默认轮询间隔（秒），比股吧慢，降低被风控的概率
 
 # 按「类型」区分的浅色行底色（与文字色同色系但很淡，用户自定义配色只管文字，不影响这层）
 KIND_BG = {
@@ -92,6 +95,7 @@ class MonitorCore:
         self._subs_lock = threading.Lock()
         self._last_tw = 0.0       # 上次抓推特的时间戳
         self._last_wb = 0.0       # 上次抓微博的时间戳
+        self._last_ths = 0.0      # 上次抓同花顺的时间戳
         self._last_append_check = 0.0  # 上次检查帖子追加的时间戳
         self._append_fail_streak = 0   # 连续失败次数，用来算退避间隔
         # 帖子追加监视表：post_id -> {"uid","code","name","expires_at"}，只在后台线程读写，
@@ -191,7 +195,9 @@ class MonitorCore:
         finally:
             db.close()
 
-    def probe_user(self, uid):
+    def probe_user(self, uid, source="guba"):
+        if source == "ths":
+            return monitor.resolve_ths_user(uid)
         return monitor.probe_guba_user(uid)
 
 
@@ -224,7 +230,8 @@ class MonitorCore:
             cfg = monitor.load_config()
             has_tw = ENABLE_TWITTER and cfg.get("twitter_users")
             has_wb = ENABLE_WEIBO and cfg.get("weibo_users")
-            if not (cfg.get("users") or has_tw or has_wb):
+            has_ths = ENABLE_THS and cfg.get("ths_users")
+            if not (cfg.get("users") or has_tw or has_wb or has_ths):
                 return "config.json 里还没有配置要监控的用户。"
         except Exception as e:
             return "读取 config.json 失败：\n%s" % e
@@ -237,6 +244,7 @@ class MonitorCore:
         self._seeded = set()      # 每次启动都重新按来源做首轮基线
         self._last_tw = 0.0
         self._last_wb = 0.0
+        self._last_ths = 0.0
         self._last_append_check = 0.0
         self._append_fail_streak = 0
         self._append_watch = {}
@@ -515,6 +523,9 @@ class MonitorCore:
             txt += "   推特 %d 人 · %ds" % (tw, cfg.get("twitter_poll_interval_seconds", 180))
         if ENABLE_WEIBO and wb:
             txt += "   微博 %d 人 · %ds" % (wb, cfg.get("weibo_poll_interval_seconds", 120))
+        ths = len(cfg.get("ths_users", []))
+        if ENABLE_THS and ths:
+            txt += "   同花顺 %d 人 · %ds" % (ths, cfg.get("ths_poll_interval_seconds", THS_DEFAULT_INTERVAL))
         return txt
 
     def save_users(self, patch):
@@ -534,6 +545,8 @@ class MonitorCore:
             sources.append(cfg.get("twitter_users", []) or [])
         if ENABLE_WEIBO:
             sources.append(cfg.get("weibo_users", []) or [])
+        if ENABLE_THS:
+            sources.append(cfg.get("ths_users", []) or [])
         for i, users in enumerate(sources):
             for u in users:
                 name = u.get("name") or u.get("uid") or u.get("handle")
@@ -572,32 +585,37 @@ class MonitorCore:
         if action == "add":
             u = body.get("user") or {}
             uid = str(u.get("uid") or "").strip()
+            ths = u.get("source") == "ths"
+            if ths and not ENABLE_THS:
+                return "同花顺监控未启用"
             if not uid or not uid.isdigit():
                 return "UID 必须是纯数字"
-            users = cfg.get("users", [])
+            list_key = "ths_users" if ths else "users"
+            users = cfg.get(list_key, [])
             if any(str(x.get("uid")) == uid for x in users):
                 return "该用户（UID: %s）已在监控列表中" % uid
             new_user = {
                 "uid": uid,
-                "name": (u.get("name") or ("股友" + uid[-4:])).strip()
+                "name": (u.get("name") or (("同花顺" if ths else "股友") + uid[-4:])).strip()
             }
             if u.get("color"):
                 new_user["color"] = u["color"]
             if u.get("mute"):
                 new_user["mute"] = True
-            if u.get("check_appends"):
+            if u.get("check_appends") and not ths:  # 「查追加」是股吧特有的
                 new_user["check_appends"] = True
             if (u.get("group") or "").strip():
                 new_user["group"] = u["group"].strip()
             users.append(new_user)
-            cfg["users"] = users
+            cfg[list_key] = users
 
         elif action == "delete":
             uid = str(body.get("uid") or (body.get("user") or {}).get("uid") or "").strip()
             if not uid:
                 return "未指定要删除的用户 UID"
-            users = cfg.get("users", [])
-            cfg["users"] = [x for x in users if str(x.get("uid")) != uid]
+            list_key = "ths_users" if body.get("source") == "ths" else "users"
+            users = cfg.get(list_key, [])
+            cfg[list_key] = [x for x in users if str(x.get("uid")) != uid]
 
         elif action == "update_all":
             patch = body.get("users") or []
@@ -607,6 +625,8 @@ class MonitorCore:
                 sources.append(cfg.get("twitter_users", []) or [])
             if ENABLE_WEIBO:
                 sources.append(cfg.get("weibo_users", []) or [])
+            if ENABLE_THS:
+                sources.append(cfg.get("ths_users", []) or [])
             for i, u_list in enumerate(sources):
                 for u in u_list:
                     uid = str(u.get("uid") or u.get("handle") or "")
@@ -734,6 +754,8 @@ class MonitorCore:
             sources.append(("twitter", cfg.get("twitter_users", []) or []))
         if ENABLE_WEIBO:
             sources.append(("weibo", cfg.get("weibo_users", []) or []))
+        if ENABLE_THS:
+            sources.append(("ths", cfg.get("ths_users", []) or []))
         for src, users in sources:
             for u in users:
                 name = u.get("name") or u.get("uid") or u.get("handle")
@@ -761,7 +783,7 @@ class MonitorCore:
             cfg = {}
         groups = cfg.get("groups", {}) or {}
         for u in ((cfg.get("users", []) or []) + (cfg.get("twitter_users", []) or [])
-                  + (cfg.get("weibo_users", []) or [])):
+                  + (cfg.get("weibo_users", []) or []) + (cfg.get("ths_users", []) or [])):
             name = u.get("name") or u.get("uid") or u.get("handle")
             if not name:
                 continue
@@ -881,6 +903,31 @@ class MonitorCore:
                             continue
                         if items:
                             self._emit(state, "wb:" + uid, name, items, db)
+                        stop_event.wait(random.uniform(2, 4))
+
+                # —— 同花顺社区（不登录、无签名；单独节奏）——
+                ths_users = cfg.get("ths_users", []) if ENABLE_THS else []
+                ths_interval = int(cfg.get("ths_poll_interval_seconds", THS_DEFAULT_INTERVAL))
+                if ths_users and (self.first_cycle or time.time() - self._last_ths >= ths_interval):
+                    self._last_ths = time.time()
+                    for hu in ths_users:
+                        if stop_event.is_set():
+                            break
+                        uid = str(hu.get("uid") or "")
+                        if not uid.isdigit():
+                            continue
+                        name = hu.get("name") or ("同花顺" + uid[-4:])
+                        skey = "ths:" + uid
+                        try:
+                            items = monitor.parse_ths(uid)
+                            monitor.complete_ths_truncated(
+                                items, set(state.get(skey, [])),
+                                on_error=lambda it, e, n=name: self.set_status("取 %s 同花顺全文失败：%s" % (n, str(e)[:80])))
+                        except Exception as e:
+                            self.set_status("抓同花顺 %s 失败：%s" % (name, str(e)[:80]))
+                            continue
+                        if items:
+                            self._emit(state, skey, name, items, db)
                         stop_event.wait(random.uniform(2, 4))
 
                 # —— 帖子追加检查（只查开了 check_appends 的用户；单独节奏，失败会自动退避）——

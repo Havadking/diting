@@ -606,6 +606,116 @@ def parse_weibo(uid, cookie):
     return items
 
 
+# ---------- 同花顺社区 ----------
+# 必须走 c.10jqka.com.cn：同一个接口在 t.10jqka.com.cn 上要带 hexin-v 反爬令牌(JS 算出来的)，不带就 403；
+# c. 域名下不用登录、不用签名。请求体字段是下划线写法(user_id)，写成 userId 不报错但返回空列表。
+# 不登录只能拿到最近 10 条，带 end_time 翻页返回空——所以没有离线补漏翻页。只有发帖，拿不到评论。
+THS_LIST_API = "https://c.10jqka.com.cn/user_center/open/api/content/v2/get_by_uid"
+THS_POST_API = "https://c.10jqka.com.cn/lgt/post/open/api/post/info/get?content_id=%s"
+THS_USER_API = "https://c.10jqka.com.cn/user_center/open/api/user/v1/get_info?is_audit=true&%s"
+
+
+def _ths_request(url, body=None):
+    headers = {"User-Agent": UA, "Accept": "application/json, text/plain, */*",
+               "Referer": "https://c.10jqka.com.cn/"}
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, headers=headers)
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        d = json.loads(resp.read().decode("utf-8", "ignore"))
+    if d.get("status_code") != 0:
+        raise RuntimeError("同花顺接口返回 %s：%s" % (d.get("status_code"), d.get("status_msg")))
+    return d.get("data") or {}
+
+
+def ths_text(s):
+    """同花顺正文是带 <span data-hx-tag="stock">$九阳股份(002242)$</span> 的 HTML，剥标签后股票就是 $名称(代码)$ 文本。"""
+    return html_to_text(s)
+
+
+def parse_ths(uid):
+    """抓同花顺社区某用户最近 10 条发帖，归一化成统一 item。"""
+    data = _ths_request(THS_LIST_API, {"user_id": int(uid)})
+    items = []
+    for c in data.get("contents") or []:
+        info = c.get("info") or {}
+        pid = str(info.get("id") or "")
+        if not pid or not info.get("ctime"):
+            continue
+        text = ths_text((c.get("abstract") or {}).get("content") or "")
+        title = ths_text((c.get("title") or {}).get("content") or "") if isinstance(c.get("title"), dict) else ""
+        n_img = len((c.get("image") or {}).get("urls") or [])
+        if n_img:
+            pic = "[图片×%d]" % n_img if n_img > 1 else "[图片]"
+            text = (text + "\n" + pic) if text else pic
+        stocks = [t.get("name") for t in (c.get("tag") or {}).get("tags") or []
+                  if t.get("type") == "stock" and t.get("name")]
+        items.append({
+            "key": "H" + pid,
+            "kind": "转发" if info.get("type") == "forward" else "发帖",
+            "icon": "🔁" if info.get("type") == "forward" else "📝",
+            "time": datetime.fromtimestamp(int(info["ctime"]) / 1000).strftime("%Y-%m-%d %H:%M:%S"),
+            "title": title,
+            "content": text,
+            # 有关联股票就用第一只当「吧」，前端会把它做成行情链接；没有就标来源
+            "bar": stocks[0] if stocks else "同花顺",
+            "ctx_user": "",
+            "ctx_text": "",
+            "link": info.get("pc_jump_url") or info.get("jump_url") or "",
+            "ths_content_id": _ths_content_id(info.get("jump_url") or info.get("pc_jump_url") or ""),
+        })
+    return items
+
+
+def _ths_content_id(link):
+    m = re.search(r"contentId[=_](\w+)", link or "")
+    return m.group(1) if m else ""
+
+
+def complete_ths_truncated(items, seen_keys, on_error=None):
+    """列表里的 abstract 是摘要，长帖会以省略号结尾；没见过的长帖去单帖接口拿全文。取不到保留摘要。"""
+    for it in items:
+        cid = it.pop("ths_content_id", "")
+        if it["key"] in seen_keys or not cid:
+            continue
+        body = it["content"].split("\n[图片")[0].rstrip()
+        if not body.endswith(("...", "…")):
+            continue
+        try:
+            post = _ths_request(THS_POST_API % cid).get("post") or {}
+            full = ths_text(post.get("content") or "")
+            if len(full) > len(body):
+                it["content"] = full + it["content"][len(body):]
+        except Exception as e:
+            if on_error:
+                on_error(it, e)
+
+
+def resolve_ths_user(s):
+    """把用户输入(纯数字 uid / 帖子链接 / 个人主页链接)解析成 {"uid", "name"}。"""
+    s = (s or "").strip()
+    if s.isdigit():
+        q = "uid=%s" % s
+    else:
+        m = re.search(r"user_code=(\w+)", s)
+        if m:
+            q = "user_code=%s" % m.group(1)
+        else:
+            cid = _ths_content_id(s)
+            if not cid:
+                raise ValueError("请填同花顺用户 ID，或粘贴他的帖子 / 个人主页链接")
+            user = (_ths_request(THS_POST_API % cid).get("post") or {}).get("user") or {}
+            if not user.get("uid"):
+                raise ValueError("这个帖子链接没解析出作者")
+            return {"uid": str(user["uid"]), "name": user.get("nickname") or ""}
+    d = _ths_request(THS_USER_API % q)
+    if not d.get("user_id"):
+        raise ValueError("没找到这个同花顺用户")
+    return {"uid": str(d["user_id"]), "name": d.get("nickname") or ""}
+
+
 # ---------- 帖子追加内容 ----------
 NEWS_LINK_RE = re.compile(r"eastmoney\.com/news,([^,]+),(\d+)\.html")
 

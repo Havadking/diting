@@ -21,6 +21,7 @@ USERS = [
     {"uid": "7423000112000000", "name": "半仓过节", "color": "#ED5126", "group": "游资"},
     {"uid": "5091223300000000", "name": "茅台信徒", "color": "#1BA784", "mute": True, "group": "价值派"},
     {"uid": "8830011290000000", "name": "量化小张"},
+    {"uid": "639660000", "name": "同花顺野人", "source": "ths"},
 ]
 # 分组：名 -> 组色（可为空串），顺序即侧栏显示顺序；和 config.json 的 groups 字段同构
 GROUPS = {"游资": "#F97D1C", "价值派": ""}
@@ -50,6 +51,10 @@ _RAW = [
      "北交所今天成交额创月内新高，微盘风格有回归迹象，但 9 月的季节性不太支持，先观察两天。"),
     (2, "15:02:44", "半仓过节", "发帖", "上证指数",
      "收盘了。这周就一句话：不追高，不割肉，持币过节。"),
+    (0, -52, "同花顺野人", "发帖", "九阳股份",
+     "$九阳股份(002242)$ 我反正卖了好久了。后面涨跌与我无关了。\n[图片]"),
+    (1, "21:30:05", "同花顺野人", "发帖", "同花顺",
+     "股吧没啥好看的，也没啥好争执的。明天咱们还是关心一下自己的账户吧！"),
 ]
 
 _ICON = {"发帖": "📝", "评论": "💬", "转发": "🔁", "追加": "➕"}
@@ -77,6 +82,8 @@ def _entry(day_off, hms, name, kind, bar, content, quote=None, key=None):
         t = "%s %s" % (d, hms)
     code = _BAR_CODES.get(bar)
     link = ("https://guba.eastmoney.com/news,%s,123456789.html" % code) if code else "https://guba.eastmoney.com/"
+    if any(u["name"] == name and u.get("source") == "ths" for u in USERS):
+        link = "https://t.10jqka.com.cn/pc/newgroup/discussdetail/contentId_mock"
     return {
         "key": key or ("M%s_%s" % (kind[0], t.replace("-", "").replace(":", "").replace(" ", ""))),
         "name": name, "kind": kind, "icon": _ICON[kind], "time": t, "bar": bar,
@@ -228,11 +235,13 @@ class MockCore(core.MonitorCore):
         matched.sort(key=lambda x: (x["time"], x["key"]))
         return matched[-limit:] if limit else matched
 
-    def probe_user(self, uid):
+    def probe_user(self, uid, source="guba"):
         uid = str(uid).strip()
+        if source == "ths" and not uid.isdigit():   # 演示模式：随便给个链接都解析成一个假 UID
+            uid = "6396%05d" % (abs(hash(uid)) % 100000)
         if not uid or not uid.isdigit():
             raise ValueError("UID 必须是纯数字")
-        return {"uid": uid, "name": "模拟用户_" + uid[-4:]}
+        return {"uid": uid, "name": ("同花顺用户_" if source == "ths" else "模拟用户_") + uid[-4:]}
 
     def manage_config(self, body):
         global USERS
@@ -242,9 +251,11 @@ class MockCore(core.MonitorCore):
             uid = str(u.get("uid") or "").strip()
             if not uid or not uid.isdigit():
                 return "UID 必须是纯数字"
-            if any(str(x.get("uid")) == uid for x in USERS):
+            src = "ths" if u.get("source") == "ths" else "guba"
+            if any(str(x.get("uid")) == uid and x.get("source", "guba") == src for x in USERS):
                 return "该用户（UID: %s）已在监控列表中" % uid
             new_u = {"uid": uid, "name": u.get("name") or ("模拟用户_" + uid[-4:])}
+            if src == "ths": new_u["source"] = "ths"
             if u.get("color"): new_u["color"] = u["color"]
             if u.get("mute"): new_u["mute"] = True
             if u.get("check_appends"): new_u["check_appends"] = True
@@ -252,7 +263,8 @@ class MockCore(core.MonitorCore):
             USERS.append(new_u)
         elif action == "delete":
             uid = str(body.get("uid") or (body.get("user") or {}).get("uid") or "").strip()
-            USERS = [x for x in USERS if str(x.get("uid")) != uid]
+            src = "ths" if body.get("source") == "ths" else "guba"
+            USERS = [x for x in USERS if not (str(x.get("uid")) == uid and x.get("source", "guba") == src)]
         elif action == "update_all":
             patch = body.get("users") or []
             by_uid = {str(p.get("uid")): p for p in patch if isinstance(p, dict) and p.get("uid")}
@@ -271,7 +283,7 @@ class MockCore(core.MonitorCore):
                 if "sound" in p:
                     if core._clean_sound(p.get("sound")): u["sound"] = core._clean_sound(p.get("sound"))
                     else: u.pop("sound", None)
-                if p.get("check_appends"): u["check_appends"] = True
+                if p.get("check_appends") and u.get("source") != "ths": u["check_appends"] = True
                 else: u.pop("check_appends", None)
             if isinstance(body.get("groups"), list):
                 cfg = {"groups": GROUPS}
@@ -303,7 +315,8 @@ class MockCore(core.MonitorCore):
                  "own_color": u.get("color") or None,
                  "group": u.get("group") or None,
                  "mute": bool(u.get("mute")), "sound": u.get("sound") or None,
-                 "check_appends": bool(u.get("check_appends"))}
+                 "source": u.get("source", "guba"),
+                 "check_appends": None if u.get("source") == "ths" else bool(u.get("check_appends"))}
                 for u in USERS]
 
     def list_groups(self):

@@ -596,6 +596,8 @@
   .srow .who { display: flex; flex-direction: column; gap: 2px; }
   .srow .who b { font-weight: 600; color: var(--uc, var(--ink)); }
   .srow .who span { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+  .srow .who .src-tag { font-style: normal; font-family: inherit; font-size: 10px; margin-right: 4px;
+                        padding: 0 4px; border: 1px solid var(--line); border-radius: 3px; color: var(--ink-2); }
   .swatches { display: flex; gap: 6px; align-items: center; }
   .swatch { width: 22px; height: 22px; border-radius: 6px; background: var(--c); border: 2px solid transparent; transition: transform .1s; }
   .swatch:hover { transform: scale(1.12); }
@@ -646,6 +648,7 @@
   }
   .input-text:focus { outline: none; border-color: var(--accent); }
   .input-text.uid-input { width: 150px; font-family: var(--mono); }
+  .add-form .src-sel + .uid-input { width: 240px; }
   .input-text.name-input { width: 130px; }
   .cfg-box {
     margin: 10px 24px 4px; padding: 12px 14px; border-radius: 8px;

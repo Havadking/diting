@@ -88,11 +88,11 @@ key, kind, icon, time, title, content, bar, ctx_user, ctx_text, link
 1. **`kind` 是中文字符串字面量**，且被当作 dict 键在两个文件里跨文件使用（`core.py` 的 `KIND_BG`、`app.py` 的 `_resolve_fg`，`monitor.py` 的 `build_message`）。取值：`发帖` / `转发` / `评论`（股吧、微博）、`推文` / `转推`（推特）、`追加`（`monitor.parse_post_appends()`，见下方「帖子追加检查」）。新增来源必须复用这些字符串，否则配色和通知文案会静默失配。
 2. **`time` 必须是 `YYYY-MM-DD HH:MM:SS` 格式**。`app.py` 直接对字符串做切片（`it["time"][:10]` 取日期分组、`it["time"][11:16]` 取显示时间）并按字符串排序，格式不对会导致分组和排序错乱。推特走 `_norm_time()`、微博走 `_parse_weibo_time()` 做归一化。
 
-`key` 带来源前缀去重：`P`(帖) / `R`(回复) / `T`(推文) / `W`(微博) / `A`(帖子追加)。
+`key` 带来源前缀去重：`P`(帖) / `R`(回复) / `T`(推文) / `W`(微博) / `H`(同花顺) / `A`(帖子追加)。
 
 ### 去重与「首轮基线」
 
-`state.json` 记录每个来源已见过的 `key`（每来源保留最近 500 条）。skey 命名：股吧用裸 uid，推特 `tw:<handle>`，微博 `wb:<uid>`。
+`state.json` 记录每个来源已见过的 `key`（每来源保留最近 500 条）。skey 命名：股吧用裸 uid，推特 `tw:<handle>`，微博 `wb:<uid>`，同花顺 `ths:<uid>`。
 
 `core.py` 的 `_emit()` 实现关键语义：**每个来源本次运行第一次抓取成功**时分两种情况——`state.json` 里没这个来源（真正第一次监控）：把最近 10 条当基线塞进列表但**不弹通知**（避免刷屏）；`state.json` 里已有记录（只是重启过）：用持久化的已见 key 做差集当作**离线期间的积压**，全部入列/写库、通知合并成一条。之后的轮次才逐条提示新增。按来源分别 seed（`self._seeded`）是有意为之——历史上曾因全局单一 seed 标志，导致某个来源开机时抓取失败就永远不显示（见 commit 7a3d470）。
 
@@ -178,6 +178,7 @@ commit message 用 conventional commits 格式，说明"为什么"而非"改了�
 - 股吧帖子全文/追加：`gbapi.eastmoney.com/content/api/Post/ArticleContent?postid={post_id}&plat=web&version=200&product=guba`（JSON，`post.post_content` 全文 HTML、`post.post_add_list` 追加，见上方「帖子全文补全与追加检查」）
 - 推特：外部 CLI `twitter user-posts @handle -n 40 --json`（`pipx install twitter-cli`），靠环境变量 `TWITTER_AUTH_TOKEN` / `TWITTER_CT0` 认证。子进程必须带 `_no_window_kwargs()` 隐藏控制台黑框。
 - 微博：`weibo.com/ajax/statuses/mymblog`，Cookie 从 `config.json` 的 `weibo_cookie` 读（至少含 `SUB`）。
+- 同花顺社区（`config.json` 的 `ths_users`，`core.py` 的 `ENABLE_THS`，节奏 `ths_poll_interval_seconds` 默认 180）：发帖列表 `POST c.10jqka.com.cn/user_center/open/api/content/v2/get_by_uid`，body `{"user_id": 数字}`。**必须用 `c.` 域名**——同一接口在 `t.10jqka.com.cn` 要带 JS 算的 `hexin-v` 令牌，不带就 403；**字段必须下划线写法**，`userId` 不报错但回空列表。不登录只给最近 10 条、`end_time` 翻页回空，所以没有离线补漏翻页；只有发帖，拿不到评论。单帖全文 `c.10jqka.com.cn/lgt/post/open/api/post/info/get?content_id=`，用户信息 `.../user/v1/get_info?uid=|user_code=`（`monitor.resolve_ths_user()` 用它们把帖子/主页链接解析成 uid）。
 - 大盘行情（腾讯）：实时 `qt.gtimg.cn/q=s_sh000001,...`（GBK、`~` 分隔），最近 5 天分时 `ifzq.gtimg.cn/appstock/app/day/query?code=sh000001`（每分钟累计成交量/额，「昨日同时段」直接取昨天同一分钟）。放量/缩量按**成交额**比，与东财「较昨日 ±xxx 亿」同口径。**别换回东财 push2**：本机 Python/curl 对它的请求会被 TLS 层断连（浏览器不受影响），详见 `docs/market-strip-design.md` §1；**别用新浪的 399001**：那是成分股合计不是深市全市场。
 
 全是非官方接口，随时可能变。抓取失败走 `q.put(("status", ...))` 显示到状态栏，**不要让单个来源的异常中断整个轮询循环**。

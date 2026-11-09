@@ -212,8 +212,9 @@ class Handler(BaseHTTPRequestHandler):
         uid = (qs.get("uid") or [""])[0].strip()
         if not uid:
             return self._send_error_json(HTTPStatus.BAD_REQUEST, "uid required")
+        source = (qs.get("source") or ["guba"])[0]
         try:
-            info = self.core.probe_user(uid)
+            info = self.core.probe_user(uid, source)
             self._send_json({"ok": True, "user": info})
         except Exception as e:
             self._send_json({"ok": False, "error": str(e)})

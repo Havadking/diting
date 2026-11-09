@@ -491,6 +491,7 @@
     const [appendSec, setAppendSec] = useState(config.append_check_interval_seconds || 300);
     const [uidInput, setUidInput] = useState("");
     const [nameInput, setNameInput] = useState("");
+    const [addSrc, setAddSrc] = useState("guba");   // 添加到哪个来源：guba 股吧 / ths 同花顺
     const [probing, setProbing] = useState(false);
     const [adding, setAdding] = useState(false);
     const [saving, setSaving] = useState(false);
@@ -506,30 +507,44 @@
       window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h);
     }, [onClose]);
 
+    // 同花顺可以直接粘贴帖子 / 个人主页链接，由后端解析成数字 UID 和昵称
+    const resolveUser = async (u) => {
+      const r = await fetch("/api/probe_user?source=" + addSrc + "&uid=" + encodeURIComponent(u));
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error || "探测失败");
+      return d.user;
+    };
+
     const probeUser = async () => {
       const u = uidInput.trim();
-      if (!u || !/^\d+$/.test(u)) return toast("请输入合法的纯数字 UID", "error");
+      if (!u || (addSrc === "guba" && !/^\d+$/.test(u))) return toast("请输入合法的纯数字 UID", "error");
       setProbing(true);
       try {
-        const r = await fetch("/api/probe_user?uid=" + encodeURIComponent(u));
-        const d = await r.json();
-        if (!d.ok) throw new Error(d.error || "探测失败");
-        setNameInput(d.user.name || "");
-        toast("已获取到昵称: " + d.user.name);
+        const info = await resolveUser(u);
+        setUidInput(info.uid);
+        setNameInput(info.name || "");
+        toast("已获取到昵称: " + info.name);
       } catch (e) {
         toast("获取昵称失败：" + e.message, "error");
       } finally { setProbing(false); }
     };
 
     const addUser = async () => {
-      const u = uidInput.trim();
-      if (!u || !/^\d+$/.test(u)) return toast("请输入合法的纯数字 UID", "error");
-      if (users.some(x => String(x.uid) === u)) return toast("该 UID 已经在关注列表中", "error");
+      let u = uidInput.trim();
+      if (!u || (addSrc === "guba" && !/^\d+$/.test(u))) return toast("请输入合法的纯数字 UID", "error");
       setAdding(true);
       try {
+        let name = nameInput.trim();
+        if (!/^\d+$/.test(u)) {   // 同花顺粘的是链接：先解析
+          const info = await resolveUser(u);
+          u = info.uid; name = name || info.name || "";
+        }
+        if (users.some(x => String(x.uid) === u && (x.source || "guba") === addSrc)) {
+          toast("该 UID 已经在关注列表中", "error"); return;
+        }
         await post("/api/users/manage", {
           action: "add",
-          user: { uid: u, name: nameInput.trim() || undefined }
+          user: { uid: u, name: name || undefined, source: addSrc }
         });
         toast("已成功添加关注用户");
         setUidInput("");
@@ -543,7 +558,7 @@
     const delUser = async (u) => {
       if (!window.confirm("确定取消关注 " + u.name + " (" + u.uid + ")？")) return;
       try {
-        await post("/api/users/manage", { action: "delete", uid: String(u.uid) });
+        await post("/api/users/manage", { action: "delete", uid: String(u.uid), source: u.source || "guba" });
         toast("已取消关注 " + u.name);
         onSaved && onSaved();
       } catch (e) {
@@ -594,7 +609,11 @@
         <div class="add-box">
           <h4>+ 添加监控用户</h4>
           <div class="add-form">
-            <input class="input-text uid-input" placeholder="输入用户数字 UID" value=${uidInput}
+            <select class="grp-sel src-sel" value=${addSrc} title="来源" onChange=${e => setAddSrc(e.target.value)}>
+              <option value="guba">股吧</option>
+              <option value="ths">同花顺</option>
+            </select>
+            <input class="input-text uid-input" placeholder=${addSrc === "ths" ? "同花顺用户 ID，或粘贴他的帖子/主页链接" : "输入用户数字 UID"} value=${uidInput}
                    onInput=${e => setUidInput(e.target.value)} onKeyDown=${e => e.key === "Enter" && probeUser()}/>
             <button class="btn quiet" disabled=${probing} onClick=${probeUser}>${probing ? "检测中…" : "检测昵称"}</button>
             <input class="input-text name-input" placeholder="备注名（选填）" value=${nameInput}
@@ -646,7 +665,7 @@
                 <div class="who">
                   <input class="uname-edit" value=${p.name} title="点击直接修改备注名"
                          onInput=${e => upd(uidStr, { name: e.target.value })}/>
-                  <span>${u.uid}</span>
+                  <span>${u.source === "ths" && html`<em class="src-tag">同花顺</em>`}${u.uid}</span>
                   <div class="who-sels">
                     ${pendGroups.length > 0 && html`
                       <select class="grp-sel" value=${p.group || ""} title="所属分组"
