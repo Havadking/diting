@@ -139,7 +139,7 @@ key, kind, icon, time, title, content, bar, ctx_user, ctx_text, link
 
 ### 4.3 配置与状态
 
-- `config.json`：`poll_interval_seconds` / `monitor_posts` / `monitor_replies` / `append_check_interval_seconds` / `push{type,key}` / `groups{名:色}` / 三个来源的用户数组（`users` / `twitter_users` / `weibo_users`）/ `weibo_cookie` / 各来源轮询间隔。用户级可选字段：`color` / `group` / `mute` / `check_appends`。
+- `config.json`：`poll_interval_seconds` / `monitor_posts` / `monitor_replies` / `append_check_interval_seconds` / `push{type,key}` / `groups{名:色}` / 三个来源的用户数组（`users` / `twitter_users` / `weibo_users`）/ `weibo_cookie` / 各来源轮询间隔。用户级可选字段：`color` / `group` / `mute` / `hidden`（照常抓取入库，但网页「全部」/分组视图不显示、不弹通知不响铃，侧栏单独点该用户才看得到）/ `check_appends`。
   - `groups` 既是配色表也是**分组定义**：dict 的插入顺序就是侧栏显示顺序（`json.dump` 保序），值为空串表示不设组色。`core.list_groups()` 会把用户引用了但表里没有的组名也补出来（颜色 `None`），侧栏才不会出现"有归属却没组头"的用户。`manage_config(update_all)` 收到 `groups` 列表时整表替换，并把引用了已删组的用户 `group` 清掉；没传 `groups` 的老客户端不动它。
 - `state.json`：`{skey: [key, ...]}`，每来源保留最近 500 条。skey：股吧用**裸 uid**、推特 `tw:<handle>`、微博 `wb:<uid>`、追加 `ap:<post_id>`。
 - **`config.json` 不在版本库里**（含 UID/Cookie/推送 key）。`save_config()` 先写 `.tmp` 再 `os.replace`，避免写一半崩了把配置清空。

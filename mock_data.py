@@ -126,7 +126,7 @@ class MockCore(core.MonitorCore):
         self.color_map = {u["name"]: (u.get("color") or GROUPS.get(u.get("group") or "") or None)
                           for u in USERS}
         self.color_map = {k: v for k, v in self.color_map.items() if v}
-        self.muted = {u["name"] for u in USERS if u.get("mute")}
+        self.muted = {u["name"] for u in USERS if u.get("mute") or u.get("hidden")}
 
     def describe_config(self):
         return "演示数据 %d 人 · 间隔 %ds" % (len(USERS), self.interval)
@@ -258,6 +258,7 @@ class MockCore(core.MonitorCore):
             if src == "ths": new_u["source"] = "ths"
             if u.get("color"): new_u["color"] = u["color"]
             if u.get("mute"): new_u["mute"] = True
+            if u.get("hidden"): new_u["hidden"] = True
             if u.get("check_appends"): new_u["check_appends"] = True
             if (u.get("group") or "").strip(): new_u["group"] = u["group"].strip()
             USERS.append(new_u)
@@ -277,6 +278,9 @@ class MockCore(core.MonitorCore):
                 else: u.pop("color", None)
                 if p.get("mute"): u["mute"] = True
                 else: u.pop("mute", None)
+                if "hidden" in p:
+                    if p.get("hidden"): u["hidden"] = True
+                    else: u.pop("hidden", None)
                 if "group" in p:
                     if (p.get("group") or "").strip(): u["group"] = p["group"].strip()
                     else: u.pop("group", None)
@@ -314,7 +318,7 @@ class MockCore(core.MonitorCore):
                  "color": u.get("color") or GROUPS.get(u.get("group") or "") or None,
                  "own_color": u.get("color") or None,
                  "group": u.get("group") or None,
-                 "mute": bool(u.get("mute")), "sound": u.get("sound") or None,
+                 "mute": bool(u.get("mute")), "hidden": bool(u.get("hidden")), "sound": u.get("sound") or None,
                  "source": u.get("source", "guba"),
                  "check_appends": None if u.get("source") == "ths" else bool(u.get("check_appends"))}
                 for u in USERS]

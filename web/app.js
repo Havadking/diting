@@ -34,6 +34,7 @@
     menu: svg('<path d="M4 7h16M4 12h16M4 17h16"/>'),
     chev: svg('<path d="M6 9l6 6 6-6"/>'),
     mute: svg('<path d="M13.7 21a2 2 0 0 1-3.4 0M18.6 13A17 17 0 0 1 18 8a6 6 0 0 0-9.3-5M6.3 6.3A6 6 0 0 0 6 8c0 7-3 9-3 9h14M1 1l22 22"/>'),
+    eyeOff: svg('<path d="M17.9 17.9A10 10 0 0 1 12 20c-7 0-11-8-11-8a18 18 0 0 1 5.1-5.9M9.9 4.2A9 9 0 0 1 12 4c7 0 11 8 11 8a18 18 0 0 1-2.2 3.2M14.1 14.1a3 3 0 1 1-4.2-4.2M1 1l22 22"/>'),
     pause: svg('<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>'),
     play: svg('<path d="M7 5v14l12-7z"/>', "currentColor"),
     gear: svg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'),
@@ -577,6 +578,7 @@
             color: u.color || null,
             group: u.group || null,
             mute: !!u.mute,
+            hidden: !!u.hidden,
             check_appends: !!u.check_appends,
             sound: u.sound || null
           })),
@@ -673,8 +675,8 @@
                         <option value="">未分组</option>
                         ${pendGroups.map(g => html`<option key=${g.name} value=${g.name}>${g.name}</option>`)}
                       </select>`}
-                    <select class="grp-sel snd-sel" value=${p.sound || ""} disabled=${p.mute}
-                            title=${p.mute ? "已静音，不响" : "该用户的提示音（选中即试听）"}
+                    <select class="grp-sel snd-sel" value=${p.sound || ""} disabled=${p.mute || p.hidden}
+                            title=${p.mute || p.hidden ? "已静音/隐藏，不响" : "该用户的提示音（选中即试听）"}
                             onChange=${e => { const v = e.target.value || null; upd(uidStr, { sound: v }); playSound(v || soundName, soundVol / 100); }}>
                       <option value="">默认音</option>
                       ${SOUNDS.map(([id, nm]) => html`<option key=${id} value=${id}>${nm}</option>`)}
@@ -691,6 +693,8 @@
                 </div>
                 <div class="toggles">
                   <label class=${"tg" + (p.mute ? " on" : "")} onClick=${() => upd(uidStr, { mute: !p.mute })}><i/>静音</label>
+                  <label class=${"tg" + (p.hidden ? " on" : "")} title="照常抓取入库，但「全部」和分组里不显示、不提醒；侧栏单独点他仍可查看"
+                         onClick=${() => upd(uidStr, { hidden: !p.hidden })}><i/>隐藏</label>
                   ${u.check_appends !== null && u.check_appends !== undefined && html`
                     <label class=${"tg" + (p.check_appends ? " on" : "")} onClick=${() => upd(uidStr, { check_appends: !p.check_appends })}><i/>查追加</label>`}
                   <button class="btn-del" title="取消关注该用户" onClick=${() => delUser(u)}>${I.trash}</button>
@@ -1484,7 +1488,10 @@
     // 用户名 -> 组名（未分组为 ""）。按组筛选时靠它判断条目归属；新动态到达时同样走 ref 拿最新值
     const groupOfUser = useMemo(() => Object.fromEntries(s.users.map(u => [u.name, u.group || ""])), [s.users]);
     const groupOfRef = useRef(groupOfUser); groupOfRef.current = groupOfUser;
-    const matches = (it, f, gmap) => (!f.user || it.name === f.user)
+    // 被设成「隐藏」的用户：照常抓取入库，但「全部」/分组视图里不显示，只有侧栏单独点他才看得到
+    const hiddenUsers = useMemo(() => new Set(s.users.filter(u => u.hidden).map(u => u.name)), [s.users]);
+    const hiddenRef = useRef(hiddenUsers); hiddenRef.current = hiddenUsers;
+    const matches = (it, f, gmap, hid) => (f.user ? it.name === f.user : !(hid && hid.has(it.name)))
       && (!f.group || (gmap[it.name] || "") === (f.group === UNGROUPED ? "" : f.group))
       && !f.kindOff.has(it.kind);
     const onNew = useCallback((entries) => {
@@ -1494,7 +1501,7 @@
       dispatch({ type: "append", items: fresh });
       setNewKeys(prev => { const n = new Set(prev); fresh.forEach(e => n.add(e.key)); return n; });
       setTimeout(() => setNewKeys(prev => { const n = new Set(prev); fresh.forEach(e => n.delete(e.key)); return n; }), NEW_MARK_MS);
-      const visibleCount = fresh.filter(e => matches(e, filterRef.current, groupOfRef.current)).length;
+      const visibleCount = fresh.filter(e => matches(e, filterRef.current, groupOfRef.current, hiddenRef.current)).length;
       if (document.visibilityState !== "visible") setUnread(u => u + visibleCount);
       if (wasAtBottom) {
         followRef.current = true;   // 由下面的 useLayoutEffect 在新卡片进 DOM 后立刻滚
@@ -1505,11 +1512,11 @@
         const isBackground = document.visibilityState !== "visible" || !document.hasFocus();
         if (isBackground) {
           const users = usersRef.current || [];
-          // 一批里只响一声：取第一条没被静音的动态，用它作者自己的提示音（没设就用默认音）
+          // 一批里只响一声：取第一条没被静音/隐藏的动态，用它作者自己的提示音（没设就用默认音）
           let audible = null;
           for (const e of fresh) {
             const u = users.find(x => x.name === e.name);
-            if (!u || !u.mute) { audible = u || {}; break; }
+            if (!u || !(u.mute || u.hidden)) { audible = u || {}; break; }
           }
           if (audible) {
             const pref = soundPrefRef.current;
@@ -1564,15 +1571,15 @@
     const colorOf = useCallback(n => colorMap[n], [colorMap]);
     const todayCount = useMemo(() => {
       const m = {}; let all = 0;
-      for (const i of s.items) if (i.time.startsWith(td)) { m[i.name] = (m[i.name] || 0) + 1; all++; }
+      for (const i of s.items) if (i.time.startsWith(td)) { m[i.name] = (m[i.name] || 0) + 1; if (!hiddenUsers.has(i.name)) all++; }
       return { m, all };
-    }, [s.items, td]);
+    }, [s.items, td, hiddenUsers]);
 
     const activeQuery = query.trim();
-    const shown = useMemo(() => s.items.filter(i => matches(i, filter, groupOfUser)), [s.items, filter, groupOfUser]);
+    const shown = useMemo(() => s.items.filter(i => matches(i, filter, groupOfUser, hiddenUsers)), [s.items, filter, groupOfUser, hiddenUsers]);
 
     const filteredShown = useMemo(() => {
-      if (searchDb !== null) return searchDb;
+      if (searchDb !== null) return filter.user ? searchDb : searchDb.filter(i => !hiddenUsers.has(i.name));
       if (!activeQuery) return shown;
       const q = activeQuery.toLowerCase();
       return shown.filter(i =>
@@ -1580,7 +1587,7 @@
         (i.name && i.name.toLowerCase().includes(q)) ||
         (i.bar && i.bar.toLowerCase().includes(q))
       );
-    }, [searchDb, activeQuery, shown]);
+    }, [searchDb, activeQuery, shown, filter.user, hiddenUsers]);
 
     // 按日期分组，升序：旧日期在上、今天在最下面
     const groups = useMemo(() => {
@@ -1614,12 +1621,12 @@
       return out;
     }, [s.groups, s.users]);
     const userRow = (u, nested) => html`
-      <button key=${u.uid + u.name} class=${"urow" + (filter.user === u.name ? " on" : "") + (nested ? " nested" : "")}
-              title=${u.name + "（今日 " + (todayCount.m[u.name] || 0) + " 条）"} onClick=${() => setUser(u.name)}>
+      <button key=${u.uid + u.name} class=${"urow" + (filter.user === u.name ? " on" : "") + (nested ? " nested" : "") + (u.hidden ? " hid" : "")}
+              title=${u.name + "（今日 " + (todayCount.m[u.name] || 0) + " 条）" + (u.hidden ? "·已隐藏，「全部」里不显示" : "")} onClick=${() => setUser(u.name)}>
         <span class=${"sw" + (!u.color ? " default-bg" : "")} style=${{ background: u.color || "var(--line-strong)" }}>
           ${userInitial(u.name)}
         </span>
-        <span class="nm"><span>${u.name}</span>${u.mute && I.mute}${u.check_appends && html`<span class="tag-mini">追加</span>`}</span>
+        <span class="nm"><span>${u.name}</span>${u.hidden ? I.eyeOff : u.mute && I.mute}${u.check_appends && html`<span class="tag-mini">追加</span>`}</span>
         <span class="cnt">${todayCount.m[u.name] || 0}</span>
       </button>`;
 
@@ -1742,7 +1749,7 @@
               </button>
               ${!sideGroups && s.users.map(u => userRow(u))}
               ${sideGroups && sideGroups.map(g => {
-                const cnt = g.users.reduce((n, u) => n + (todayCount.m[u.name] || 0), 0);
+                const cnt = g.users.reduce((n, u) => n + (u.hidden ? 0 : (todayCount.m[u.name] || 0)), 0);
                 const folded = groupFold.has(g.name);
                 const on = filter.group === g.name;
                 return html`

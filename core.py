@@ -529,7 +529,7 @@ class MonitorCore:
         return txt
 
     def save_users(self, patch):
-        """写回用户设置（配色 / 静音 / 查追加）。patch 是 [{name, color, mute, check_appends}]。
+        """写回用户设置（配色 / 静音 / 隐藏 / 查追加）。patch 是 [{name, color, mute, hidden, check_appends}]。
         只改请求里出现且当前启用来源里存在的用户，其它用户、其它顶层键（weibo_cookie 等）原样保留；
         推特/微博下线期间它们不会出现在 list_users() 里，自然也不会被误清空。返回 None 或错误文案。"""
         try:
@@ -561,6 +561,11 @@ class MonitorCore:
                     u["mute"] = True
                 else:
                     u.pop("mute", None)
+                if "hidden" in p:  # 隐藏：照常抓取入库，只是主页不显示、不弹通知
+                    if p.get("hidden"):
+                        u["hidden"] = True
+                    else:
+                        u.pop("hidden", None)
                 if i == 0:  # 「查追加」是股吧特有的
                     if p.get("check_appends"):
                         u["check_appends"] = True
@@ -602,6 +607,8 @@ class MonitorCore:
                 new_user["color"] = u["color"]
             if u.get("mute"):
                 new_user["mute"] = True
+            if u.get("hidden"):
+                new_user["hidden"] = True
             if u.get("check_appends") and not ths:  # 「查追加」是股吧特有的
                 new_user["check_appends"] = True
             if (u.get("group") or "").strip():
@@ -643,6 +650,11 @@ class MonitorCore:
                         u["mute"] = True
                     else:
                         u.pop("mute", None)
+                    if "hidden" in p:  # 隐藏：照常抓取入库，只是主页不显示、不弹通知
+                        if p.get("hidden"):
+                            u["hidden"] = True
+                        else:
+                            u.pop("hidden", None)
                     if "group" in p:
                         g = (p.get("group") or "").strip()
                         if g:
@@ -768,6 +780,7 @@ class MonitorCore:
                             "source": src, "color": color, "own_color": u.get("color") or None,
                             "group": u.get("group") or None,
                             "mute": bool(u.get("mute")),
+                            "hidden": bool(u.get("hidden")),
                             "sound": u.get("sound") or None,
                             "check_appends": bool(u.get("check_appends")) if src == "guba" else None})
         return out
@@ -790,7 +803,7 @@ class MonitorCore:
             c = u.get("color") or (groups.get(u.get("group")) if u.get("group") else None)
             if c:
                 m[name] = c
-            if u.get("mute"):
+            if u.get("mute") or u.get("hidden"):  # 隐藏的人主页看不到，弹通知也没意义，按静音处理
                 muted.add(name)
         self.color_map = m
         self.muted = muted

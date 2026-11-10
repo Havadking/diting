@@ -308,6 +308,7 @@
   .urow .cnt { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
   .urow.on .cnt { color: var(--accent); }
   .urow .nm svg { width: 12px; height: 12px; flex: none; color: var(--ink-3); }
+  .urow.hid:not(.on) .nm, .urow.hid:not(.on) .sw, .urow.hid:not(.on) .cnt { opacity: .5; }
   .tag-mini { font-size: 10px; color: var(--ink-3); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; line-height: 15px; }
   /* 侧栏分组：组头一行 = 折叠钮 + 主按钮（点主按钮「只看本组」），组内用户行缩进并带一条竖线 */
   .ugroup { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
