@@ -205,7 +205,10 @@
   .mkt .bars i { display: block; height: 4px; border-radius: 2px; background: var(--line-strong); }
   .mkt .bars i.today { background: var(--accent); }
   /* 尾部：刷新时间 + 收起 */
-  .mkt .tail time { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); }
+  .mkt .tail time { font-family: var(--mono); font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  /* KOSPI 按自己的开收盘淡化，不跟 A 股的 stale 走（北京 8:00~9:15 韩国已开、A 股还没开） */
+  .mkt .seg.kospi .idx .px, .mkt .seg.kospi .idx .chg { opacity: 1; }
+  .mkt .seg.kospi.closed .idx .px, .mkt .seg.kospi.closed .idx .chg { opacity: .55; }
   .mkt .tail .xbtn { width: 22px; height: 22px; border-radius: 6px; color: var(--ink-3); display: inline-flex; align-items: center; justify-content: center; }
   .mkt .tail .xbtn:hover { background: var(--bg); color: var(--ink); }
   .mkt .tail .xbtn svg { width: 13px; height: 13px; }
@@ -213,30 +216,33 @@
   .mkt .err { color: var(--danger); font-size: 12px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
   /* 收盘 / 休市 / 接口失败：数字淡化表示不再更新 */
   .mkt.stale .idx .px, .mkt.stale .idx .chg, .mkt.stale .amt .v { opacity: .55; }
+  .mkt .kospi .nm .sm { display: none; }
   /* 响应式：按信息价值逐级减。每一档的阈值 = 上一档内容实际需要的宽度（mock 数据下量出来的），
      这样刚跨过断点时右侧留白不会突然多出一大截；各档去掉的东西也尽量小步走。
-     ≤1150px：去掉沪深300、「vs 昨日同时段」文字、百分比、迷你柱（剩余约 910px）
-     ≤940px：再去掉刷新时间、收紧间距（剩余约 790px）
-     ≤800px：再去掉阶段文字、「两市」标签（剩余约 720px）
-     ≤720px（竖屏副屏）：再去掉点位，只留涨跌幅（剩余约 520px）
-     ≤480px（手机竖屏）：再去掉成交额和 ✕（「⋯」菜单里仍可隐藏） */
-  @media (max-width: 1150px) {
-    .mkt .idx.extra, .mkt .vol .vs, .mkt .vol .bars, .mkt .vol .pct { display: none; }
+     KOSPI 涨跌幅和北京时间时钟各档都保留。
+     ≤1360px：去掉沪深300、「vs 昨日同时段」文字、百分比、迷你柱、KOSPI 点位（剩余约 950px）
+     ≤950px：收紧间距，去掉阶段文字、「两市」标签（剩余约 815px）
+     ≤815px（竖屏副屏）：再去掉点位，只留涨跌幅（剩余约 625px）
+     ≤640px（手机竖屏）：再去掉成交额、阶段圆点和 ✕（「⋯」菜单里仍可隐藏），KOSPI 标签缩成「韩」（剩余约 500px）
+     ≤520px（手机）：再去掉创业板和较昨日成交额，只留上证、深成、KOSPI 涨跌幅 + 时钟 */
+  @media (max-width: 1360px) {
+    .mkt .idx.extra, .mkt .vol .vs, .mkt .vol .bars, .mkt .vol .pct, .mkt .kospi .px { display: none; }
   }
-  @media (max-width: 940px) {
+  @media (max-width: 950px) {
     .mkt { padding: 0 10px 0 12px; }
     .mkt .seg { padding: 0 8px; }
-    .mkt .tail time { display: none; }
-  }
-  @media (max-width: 800px) {
     .mkt .phase .ph-lbl, .mkt .amt .lb { display: none; }
   }
-  @media (max-width: 720px) {
+  @media (max-width: 815px) {
     .mkt .idx .px { display: none; }
   }
-  @media (max-width: 480px) {
+  @media (max-width: 640px) {
     .mkt .seg { padding: 0 6px; }
-    .mkt .amt, .mkt .tail .xbtn { display: none; }
+    .mkt .amt, .mkt .tail .xbtn, .mkt .kospi .nm .lg, .mkt .seg:first-child { display: none; }
+    .mkt .kospi .nm .sm { display: inline; }
+  }
+  @media (max-width: 520px) {
+    .mkt .idx.third, .mkt .vol { display: none; }
   }
 
   /* ---------- 侧栏 ---------- */

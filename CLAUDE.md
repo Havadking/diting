@@ -179,6 +179,6 @@ commit message 用 conventional commits 格式，说明"为什么"而非"改了�
 - 推特：外部 CLI `twitter user-posts @handle -n 40 --json`（`pipx install twitter-cli`），靠环境变量 `TWITTER_AUTH_TOKEN` / `TWITTER_CT0` 认证。子进程必须带 `_no_window_kwargs()` 隐藏控制台黑框。
 - 微博：`weibo.com/ajax/statuses/mymblog`，Cookie 从 `config.json` 的 `weibo_cookie` 读（至少含 `SUB`）。
 - 同花顺社区（`config.json` 的 `ths_users`，`core.py` 的 `ENABLE_THS`，节奏 `ths_poll_interval_seconds` 默认 180）：发帖列表 `POST c.10jqka.com.cn/user_center/open/api/content/v2/get_by_uid`，body `{"user_id": 数字}`。**必须用 `c.` 域名**——同一接口在 `t.10jqka.com.cn` 要带 JS 算的 `hexin-v` 令牌，不带就 403；**字段必须下划线写法**，`userId` 不报错但回空列表。不登录只给最近 10 条、`end_time` 翻页回空，所以没有离线补漏翻页；只有发帖，拿不到评论。单帖全文 `c.10jqka.com.cn/lgt/post/open/api/post/info/get?content_id=`，用户信息 `.../user/v1/get_info?uid=|user_code=`（`monitor.resolve_ths_user()` 用它们把帖子/主页链接解析成 uid）。
-- 大盘行情（腾讯）：实时 `qt.gtimg.cn/q=s_sh000001,...`（GBK、`~` 分隔），最近 5 天分时 `ifzq.gtimg.cn/appstock/app/day/query?code=sh000001`（每分钟累计成交量/额，「昨日同时段」直接取昨天同一分钟）。放量/缩量按**成交额**比，与东财「较昨日 ±xxx 亿」同口径。**别换回东财 push2**：本机 Python/curl 对它的请求会被 TLS 层断连（浏览器不受影响），详见 `docs/market-strip-design.md` §1；**别用新浪的 399001**：那是成分股合计不是深市全市场。
+- 大盘行情（腾讯）：实时 `qt.gtimg.cn/q=s_sh000001,...`（GBK、`~` 分隔；韩国 KOSPI 是同一请求里的 `gzKS11`），最近 5 天分时 `ifzq.gtimg.cn/appstock/app/day/query?code=sh000001`（每分钟累计成交量/额，「昨日同时段」直接取昨天同一分钟）。放量/缩量按**成交额**比，与东财「较昨日 ±xxx 亿」同口径。**别换回东财 push2**：本机 Python/curl 对它的请求会被 TLS 层断连（浏览器不受影响），详见 `docs/market-strip-design.md` §1；**别用新浪的 399001**：那是成分股合计不是深市全市场。
 
 全是非官方接口，随时可能变。抓取失败走 `q.put(("status", ...))` 显示到状态栏，**不要让单个来源的异常中断整个轮询循环**。

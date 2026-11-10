@@ -1143,6 +1143,21 @@
     : html`${Math.round(yuan / 1e8)}<span class="unit">亿</span>`;
   // 较昨日的成交额差：整数亿，带符号；≥1 万亿也按亿显示（"+12345亿"），跟东财首页一致
   const fmtDiff = yuan => (yuan > 0 ? "+" : yuan < 0 ? "−" : "") + Math.round(Math.abs(yuan) / 1e8) + "亿";
+  // 北京时间时钟（到秒）：单独一个组件每秒只重画自己，不带着整条大盘条重渲染。
+  // 用 Intl 指定 Asia/Shanghai，电脑时区不是东八区也照样显示北京时间。
+  const BJ_FMT = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  function BeijingClock({ title }) {
+    const [now, setNow] = useState(() => new Date());
+    useEffect(() => {
+      let t;
+      // 对齐到整秒再跳，避免和系统时钟差半秒
+      const tick = () => { setNow(new Date()); t = setTimeout(tick, 1000 - (Date.now() % 1000) + 5); };
+      t = setTimeout(tick, 1000 - (Date.now() % 1000) + 5);
+      return () => clearTimeout(t);
+    }, []);
+    return html`<time class="clock" title=${title}>${BJ_FMT.format(now)}</time>`;
+  }
+
   function MarketStrip({ data, onHide }) {
     if (!data) return html`<div class="mkt"><span class="seg"><span class="muted">大盘数据加载中…</span></span></div>`;
     const ph = PHASE[data.phase] || PHASE.closed;
@@ -1155,7 +1170,7 @@
       <div class=${"mkt" + (stale ? " stale" : "")} title=${data.trade_date ? "交易日 " + data.trade_date : undefined}>
         <span class="seg"><span class="phase"><span class=${"dot " + ph.cls}/><span class="ph-lbl">${ph.lbl}</span></span></span>
         <span class="seg">
-          ${data.idx.map((o, i) => html`<span key=${o.code} class=${"idx " + (o.chg > 0 ? "up" : o.chg < 0 ? "dn" : "flat") + (i >= 3 ? " extra" : "")}>
+          ${data.idx.map((o, i) => html`<span key=${o.code} class=${"idx " + (o.chg > 0 ? "up" : o.chg < 0 ? "dn" : "flat") + (i >= 3 ? " extra" : i === 2 ? " third" : "")}>
             <span class="nm">${o.nm}</span><span class="px">${o.px.toFixed(2)}</span><span class="chg">${fmtPct(o.chg)}</span></span>`)}
         </span>
         ${data.amt > 0 && html`<span class="seg amt"><span class="lb">两市</span><span class="v">${fmtAmt(data.amt)}</span></span>`}
@@ -1168,10 +1183,15 @@
             <span class="vs">${vol.vs}</span>
             <span class="bars"><i class="today" style=${{ width: w1 + "%" }}/><i style=${{ width: w2 + "%" }}/></span>
           </span>` : data.phase === "pre" ? html`<span class="seg vol"><span class="muted">开盘后开始比较成交量</span></span>` : null}
+        ${data.kospi && html`
+          <span class=${"seg kospi" + (data.kospi.open ? "" : " closed")} title=${"韩国 KOSPI（首尔综合指数）" + (data.kospi.open ? "，交易中" : "，已休市")}>
+            <span class=${"idx " + (data.kospi.chg > 0 ? "up" : data.kospi.chg < 0 ? "dn" : "flat")}>
+              <span class="nm"><span class="lg">KOSPI</span><span class="sm">韩</span></span><span class="px">${data.kospi.px.toFixed(2)}</span><span class="chg">${fmtPct(data.kospi.chg)}</span></span>
+          </span>`}
         ${data.err && html`<span class="seg"><span class="err" title=${data.err}>${data.err}</span></span>`}
         <span class="seg grow"/>
         <span class="seg tail">
-          <time>${data.at}${data.phase === "open" || data.phase === "pre" ? " 刷新" : ""}</time>
+          <${BeijingClock} title=${"北京时间 · 行情 " + data.at + " 刷新"}/>
           <button class="xbtn" title="收起大盘条（顶栏图表按钮或「⋯」菜单可恢复）" onClick=${onHide}>${I.x}</button>
         </span>
       </div>`;

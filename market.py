@@ -40,6 +40,11 @@ INDICES = [
 MARKET_SYMS = ("sh000001", "sz399001")
 
 QUOTE_URL = "https://qt.gtimg.cn/q=%s"                                   # 实时快照，GBK，一行一个
+# 韩国 KOSPI（首尔综合指数）：腾讯全球指数代码 gzKS11，跟 A 股指数同一个请求顺带取回。
+# 字段（~ 分隔）：0 代码 1 名称 2 行情时间(北京时间) 3 现价 4 涨跌额 5 涨跌幅%。
+# 韩国交易时段 9:00~15:30 KST = 北京时间 8:00~14:30（韩国不实行夏令时）。
+KOSPI_SYM = "gzKS11"
+KOSPI_OPEN = ((8, 0), (14, 30))
 MINUTES_URL = "https://ifzq.gtimg.cn/appstock/app/day/query?code=%s"     # 最近 5 个交易日的分时：每分钟累计量/额
 
 VOL_THRESHOLD = 0.10     # 放量/缩量的判定阈值（±10%），先写死，看一周数据再决定要不要做成配置
@@ -54,14 +59,16 @@ def _get(url, encoding="utf-8"):
 
 
 _QUOTE_LINE = re.compile(r'v_s_(\w+)="([^"]*)"')
+_KOSPI_LINE = re.compile(r'v_%s="([^"]*)"' % KOSPI_SYM)
 
 
 def fetch_quotes():
     """
     实时快照。返回 {sym: {"code","nm","px","chg","vol","amt"}}，vol 单位手、amt 单位元。
     腾讯 s_ 简版字段（~ 分隔）：1 名称 2 代码 3 现价 4 涨跌额 5 涨跌幅% 6 成交量(手) 7 成交额(万元)
+    另外顺带返回 KOSPI_SYM: {"px","chg","time"}；它解析不出来只是缺这一项，不算失败。
     """
-    body = _get(QUOTE_URL % ",".join("s_" + s for s, _, _ in INDICES), encoding="gbk")
+    body = _get(QUOTE_URL % ",".join(["s_" + s for s, _, _ in INDICES] + [KOSPI_SYM]), encoding="gbk")
     raw = dict(_QUOTE_LINE.findall(body))
     out = {}
     for sym, code, nm in INDICES:
@@ -75,6 +82,13 @@ def fetch_quotes():
             continue
     if len(out) < 3:
         raise RuntimeError("行情接口只返回了 %d 个指数" % len(out))
+    m = _KOSPI_LINE.search(body)
+    f = m.group(1).split("~") if m else []
+    if len(f) >= 6:
+        try:
+            out[KOSPI_SYM] = {"px": float(f[3]), "chg": float(f[5]), "time": f[2]}
+        except ValueError:
+            pass
     return out
 
 
@@ -172,7 +186,20 @@ def build_payload(quotes, minutes, now):
                 vol = {"ratio": round(ratio, 4), "diff": round(amt - base), "tag": tag, "vs": vs}
 
     return {"phase": phase, "at": now.strftime("%H:%M:%S"), "trade_date": trade_date,
-            "idx": idx, "amt": amt, "vol": vol, "err": None}
+            "idx": idx, "amt": amt, "vol": vol, "kospi": _kospi_of(quotes.get(KOSPI_SYM), now), "err": None}
+
+
+def kospi_open(now):
+    """按北京时间判断韩国是否在交易时段（不管韩国节假日，那个靠行情时间是不是今天兜底）。"""
+    return now.weekday() < 5 and KOSPI_OPEN[0] <= (now.hour, now.minute) < KOSPI_OPEN[1]
+
+
+def _kospi_of(q, now):
+    """KOSPI 展示数据；open = 现在在交易时段且行情时间是今天（韩国休市日行情停在上个交易日）。"""
+    if not q:
+        return None
+    return {"px": round(q["px"], 2), "chg": round(q["chg"], 2) or 0.0,
+            "open": kospi_open(now) and q["time"][:10] == now.strftime("%Y-%m-%d")}
 
 
 # ---------- 后台线程 ----------
@@ -214,7 +241,8 @@ class MarketFeed:
         self._stop.set()
 
     def _interval_for(self, phase):
-        if phase in ("open", "pre"):
+        # KOSPI 开盘时段（北京 8:00~14:30）比 A 股早开早收，这段时间也按实时节奏刷
+        if phase in ("open", "pre") or kospi_open(datetime.now()):
             return self.QUOTE_INTERVAL
         if phase == "lunch":
             return self.IDLE_INTERVAL
@@ -266,6 +294,7 @@ class MockMarketFeed(MarketFeed):
         self._rnd = random.Random()
         self._base = {"sh000001": 3891.96, "sz399001": 13563.74, "sz399006": 3351.56, "sh000300": 4492.32}
         self._px = dict(self._base)
+        self._kospi = [5018.85, 5018.85]                                 # [昨收, 现价]
         self._prev_amt = 1.82e12                                        # 昨日两市全天成交额
         self._day_amt = self._prev_amt * (0.8 + 0.45 * self._rnd.random())   # 今日全天，随机放量或缩量
 
@@ -279,6 +308,9 @@ class MockMarketFeed(MarketFeed):
             amt = self._day_amt * share * frac
             out[sym] = {"code": code, "nm": nm, "px": self._px[sym], "chg": (self._px[sym] / self._base[sym] - 1) * 100,
                         "vol": amt / 1500, "amt": amt}
+        self._kospi[1] *= 1 + self._rnd.uniform(-0.001, 0.0012)
+        out[KOSPI_SYM] = {"px": self._kospi[1], "chg": (self._kospi[1] / self._kospi[0] - 1) * 100,
+                          "time": now.strftime("%Y-%m-%d %H:%M:%S")}
         return out
 
     def _fetch_minutes(self):
