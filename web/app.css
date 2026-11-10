@@ -209,6 +209,16 @@
   /* KOSPI 按自己的开收盘淡化，不跟 A 股的 stale 走（北京 8:00~9:15 韩国已开、A 股还没开） */
   .mkt .seg.kospi .idx .px, .mkt .seg.kospi .idx .chg { opacity: 1; }
   .mkt .seg.kospi.closed .idx .px, .mkt .seg.kospi.closed .idx .chg { opacity: .55; }
+  /* KOSPI 迷你分时：整段允许收缩、线优先被挤掉，所以窗口再窄也不会把条撑出横向滚动 */
+  .mkt .seg.kospi { flex-shrink: 1; min-width: 0; }
+  .mkt .kospi .idx { flex-shrink: 0; }
+  .mkt .spark { flex: 0 1 96px; min-width: 0; height: 20px; overflow: visible; }
+  .mkt .spark polyline { fill: none; stroke-width: 1.4; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+  .mkt .spark .base { stroke: var(--line-strong); stroke-width: 1; stroke-dasharray: 2 2; vector-effect: non-scaling-stroke; }
+  .mkt .spark.up polyline { stroke: var(--stock-red); }
+  .mkt .spark.dn polyline { stroke: var(--ok); }
+  .mkt .spark.flat polyline { stroke: var(--ink-3); }
+  .mkt .kospi.closed .spark { opacity: .55; }
   .mkt .tail .xbtn { width: 22px; height: 22px; border-radius: 6px; color: var(--ink-3); display: inline-flex; align-items: center; justify-content: center; }
   .mkt .tail .xbtn:hover { background: var(--bg); color: var(--ink); }
   .mkt .tail .xbtn svg { width: 13px; height: 13px; }
@@ -240,6 +250,7 @@
     .mkt .seg { padding: 0 6px; }
     .mkt .amt, .mkt .tail .xbtn, .mkt .kospi .nm .lg, .mkt .seg:first-child { display: none; }
     .mkt .kospi .nm .sm { display: inline; }
+    .mkt .spark { display: none; }
   }
   @media (max-width: 520px) {
     .mkt .idx.third, .mkt .vol { display: none; }

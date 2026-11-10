@@ -1158,6 +1158,22 @@
     return html`<time class="clock" title=${title}>${BJ_FMT.format(now)}</time>`;
   }
 
+  // KOSPI 迷你分时：横轴固定为全天（北京 8:00~14:30），线随时间从左往右长；虚线是昨收。
+  // viewBox 宽 = 桶数，preserveAspectRatio="none" 让它随可用宽度伸缩，线宽靠 non-scaling-stroke 保持 1px 多。
+  function Spark({ k }) {
+    const line = k.line, n = k.slots || line.length, H = 20, pad = 2;
+    let lo = Math.min(k.prev, ...line), hi = Math.max(k.prev, ...line);
+    if (hi - lo < 1e-6) { hi += 1; lo -= 1; }
+    const y = v => (pad + (hi - v) / (hi - lo) * (H - 2 * pad)).toFixed(2);
+    const pts = line.map((v, i) => i + "," + y(v)).join(" ");
+    const last = line[line.length - 1];
+    const cls = last > k.prev ? "up" : last < k.prev ? "dn" : "flat";
+    return html`<svg class=${"spark " + cls} viewBox=${"0 0 " + (n - 1) + " " + H} preserveAspectRatio="none" aria-hidden="true">
+      <line class="base" x1="0" x2=${n - 1} y1=${y(k.prev)} y2=${y(k.prev)}/>
+      <polyline points=${pts}/>
+    </svg>`;
+  }
+
   function MarketStrip({ data, onHide }) {
     if (!data) return html`<div class="mkt"><span class="seg"><span class="muted">大盘数据加载中…</span></span></div>`;
     const ph = PHASE[data.phase] || PHASE.closed;
@@ -1187,6 +1203,7 @@
           <span class=${"seg kospi" + (data.kospi.open ? "" : " closed")} title=${"韩国 KOSPI（首尔综合指数）" + (data.kospi.open ? "，交易中" : "，已休市")}>
             <span class=${"idx " + (data.kospi.chg > 0 ? "up" : data.kospi.chg < 0 ? "dn" : "flat")}>
               <span class="nm"><span class="lg">KOSPI</span><span class="sm">韩</span></span><span class="px">${data.kospi.px.toFixed(2)}</span><span class="chg">${fmtPct(data.kospi.chg)}</span></span>
+            ${data.kospi.line && data.kospi.line.length > 1 && html`<${Spark} k=${data.kospi}/>`}
           </span>`}
         ${data.err && html`<span class="seg"><span class="err" title=${data.err}>${data.err}</span></span>`}
         <span class="seg grow"/>

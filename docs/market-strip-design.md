@@ -14,6 +14,7 @@
 | 最近 5 个交易日的分时 | `https://ifzq.gtimg.cn/appstock/app/day/query?code=sh000001` | `data.sh000001.data[]` 每天 `{date: "yyyymmdd", data: ["HHMM 价格 累计成交量(手) 累计成交额(元)", …]}`，242 行/天。**累计额直接可用**，「昨日同时段」就是昨天同一分钟那行 |
 
 | 韩国 KOSPI（2026-11-10 加） | 同一个请求末尾追加 `gzKS11`（不带 `s_`） | `v_gzKS11="…"`，`~` 分隔：0 代码、1 名称、2 行情时间（北京时间 `YYYY-MM-DD HH:MM:SS`）、3 现价、4 涨跌额、5 涨跌幅 %。解析不出来只是条上不显示 KOSPI，不算整次失败 |
+| KOSPI 分时（新浪） | `https://gi.finance.sina.com.cn/hq/min?symbol=KOSPI`（不要 Referer） | JSON `result.data[]`，每行 `["HH:MM"(北京时间), 价格, …]`，第一行额外带 `[…, 日期, 昨收]`。腾讯 `ifzq` 的分时接口不认 `gzKS11`（`code param error`），所以单独走新浪。失败就沿用上次 / 不画线，不触发退避 |
 
 代码前缀：`sh` 沪市、`sz` 深市。上证 `sh000001`、深成 `sz399001`、创业板 `sz399006`、沪深300 `sh000300`。
 
@@ -86,7 +87,9 @@
     "tag": "more",                      // more | less | flat
     "vs": "vs 昨日同时段"               // 后端直接给文案，前端不做时段判断
   },
-  "kospi": {"px": 5224.79, "chg": 4.10, "open": true},   // 韩国 KOSPI；没取到为 null。open = 在交易时段且行情时间是今天（韩国休市日停在上个交易日）
+  "kospi": {"px": 5224.79, "chg": 4.10, "open": true,    // 韩国 KOSPI；没取到为 null。open = 在交易时段且行情时间是今天（韩国休市日停在上个交易日）
+            "line": [5259.0, 5274.97, …],            // 迷你分时：北京 8:00 起每 3 分钟一个点，只到当前；开盘中末点用实时价。分时没取到 / 日期对不上时没有 line/prev/slots
+            "prev": 5018.85, "slots": 131},           // 昨收（画虚线基准）、全天桶数（前端定横轴，线从左往右长）
   "err": null                           // 失败时是一句中文，前端原样显示
 }
 ```
@@ -106,6 +109,7 @@
   - KOSPI 涨跌幅和北京时间时钟各档都保留
 - 右侧时钟：前端 `BeijingClock` 组件，`Intl.DateTimeFormat` 固定 `Asia/Shanghai` 显示到秒，每秒只重画自己；原来的「行情刷新时间」挪进时钟的 tooltip。
 - KOSPI 按自己的 `open` 淡化（`.kospi.closed`），不跟 A 股的 `.stale` 走。
+- KOSPI 迷你分时（`Spark` 组件）：涨跌幅右边一条 SVG 折线 + 昨收虚线，红涨绿跌；最宽 96px，`flex-shrink` 让它在空间不够时先被挤窄，不参与断点计算、不会撑出横向滚动；`≤640px` 隐藏。地方太小，画 K 线（蜡烛）看不清，所以用分时线。
 - 颜色：指数红涨绿跌沿用 `--stock-red` / `--ok`；放量 pill 用 `--warn` 系（需在 `:root` 新增 `--warn-soft`），缩量 pill 灰色描边——放/缩量本身不分好坏，刻意不用红绿。
 - 收盘 / 非交易日 / 接口失败三种状态给 `.stale`，数字 `opacity: .55`。
 - 迷你双柱：今日 vs 昨日同时段，长的那根撑满 44px，另一根按比例；今日那根用 `--accent`。

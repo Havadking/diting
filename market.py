@@ -45,6 +45,11 @@ QUOTE_URL = "https://qt.gtimg.cn/q=%s"                                   # 实�
 # 韩国交易时段 9:00~15:30 KST = 北京时间 8:00~14:30（韩国不实行夏令时）。
 KOSPI_SYM = "gzKS11"
 KOSPI_OPEN = ((8, 0), (14, 30))
+# KOSPI 分时（新浪全球指数，不要 Referer）：result.data 每行 [北京时间 "HH:MM", 价格, ...]，
+# 第一行额外带 [.., 日期, 昨收]。腾讯 ifzq 的分时接口不认 gzKS11，所以这一项单独走新浪。
+KOSPI_MIN_URL = "https://gi.finance.sina.com.cn/hq/min?symbol=KOSPI"
+KOSPI_STEP = 3                                    # 迷你走势线按 3 分钟一个点，全天 131 个点
+KOSPI_SLOTS = (14 * 60 + 30 - 8 * 60) // KOSPI_STEP + 1
 MINUTES_URL = "https://ifzq.gtimg.cn/appstock/app/day/query?code=%s"     # 最近 5 个交易日的分时：每分钟累计量/额
 
 VOL_THRESHOLD = 0.10     # 放量/缩量的判定阈值（±10%），先写死，看一周数据再决定要不要做成配置
@@ -119,6 +124,33 @@ def fetch_minutes(sym):
     return out
 
 
+def fetch_kospi_minutes():
+    """
+    KOSPI 当日（或最近一个交易日）分时。返回 {"date","prev","line"}：
+    line 按 KOSPI_STEP 分钟分桶、从北京 8:00 起算，每桶取最后一个价格，还没走到的桶不给（列表只到当前）。
+    """
+    rows = ((json.loads(_get(KOSPI_MIN_URL)).get("result") or {}).get("data")) or []
+    if not rows or len(rows[0]) < 6:
+        raise RuntimeError("KOSPI 分时数据为空")
+    line = []
+    for r in rows:
+        try:
+            h, m = map(int, r[0].split(":"))
+            px = float(r[1])
+        except (ValueError, IndexError, AttributeError):
+            continue
+        i = (h * 60 + m - 8 * 60) // KOSPI_STEP
+        if not 0 <= i < KOSPI_SLOTS or px <= 0:
+            continue
+        while len(line) < i:                      # 中间缺分钟就沿用上一个价
+            line.append(line[-1] if line else px)
+        if len(line) == i:
+            line.append(px)
+        else:
+            line[i] = px
+    return {"date": rows[0][4], "prev": float(rows[0][5]), "line": [round(x, 2) for x in line]}
+
+
 # ---------- 交易阶段 ----------
 def phase_of(now):
     """只按本机时间 + 星期判断：pre / open / lunch / closed / holiday。节假日误判由 K 线兜底（见 build_payload）。"""
@@ -144,7 +176,7 @@ def _cum_at(rows, hhmm):
     return rows[max(keys)] if keys else 0.0
 
 
-def build_payload(quotes, minutes, now):
+def build_payload(quotes, minutes, now, kospi_min=None):
     """
     把抓到的原始数据算成前端要的形状（见 docs/market-strip-design.md §5）。
     quotes: fetch_quotes()；minutes: {sym: fetch_minutes()}，可以是空 dict。
@@ -186,7 +218,7 @@ def build_payload(quotes, minutes, now):
                 vol = {"ratio": round(ratio, 4), "diff": round(amt - base), "tag": tag, "vs": vs}
 
     return {"phase": phase, "at": now.strftime("%H:%M:%S"), "trade_date": trade_date,
-            "idx": idx, "amt": amt, "vol": vol, "kospi": _kospi_of(quotes.get(KOSPI_SYM), now), "err": None}
+            "idx": idx, "amt": amt, "vol": vol, "kospi": _kospi_of(quotes.get(KOSPI_SYM), now, kospi_min), "err": None}
 
 
 def kospi_open(now):
@@ -194,12 +226,21 @@ def kospi_open(now):
     return now.weekday() < 5 and KOSPI_OPEN[0] <= (now.hour, now.minute) < KOSPI_OPEN[1]
 
 
-def _kospi_of(q, now):
-    """KOSPI 展示数据；open = 现在在交易时段且行情时间是今天（韩国休市日行情停在上个交易日）。"""
+def _kospi_of(q, now, kmin=None):
+    """
+    KOSPI 展示数据；open = 现在在交易时段且行情时间是今天（韩国休市日行情停在上个交易日）。
+    kmin（fetch_kospi_minutes）和行情同一天时带上迷你走势线：line / prev / slots（全天桶数，前端按它定横轴）。
+    """
     if not q:
         return None
-    return {"px": round(q["px"], 2), "chg": round(q["chg"], 2) or 0.0,
-            "open": kospi_open(now) and q["time"][:10] == now.strftime("%Y-%m-%d")}
+    out = {"px": round(q["px"], 2), "chg": round(q["chg"], 2) or 0.0,
+           "open": kospi_open(now) and q["time"][:10] == now.strftime("%Y-%m-%d")}
+    if kmin and kmin.get("line") and kmin.get("date") == q["time"][:10]:
+        line = list(kmin["line"])
+        if out["open"]:
+            line[-1] = out["px"]                  # 分时每分钟才刷一次，末端用实时价接上
+        out.update(line=line, prev=round(kmin["prev"], 2), slots=KOSPI_SLOTS)
+    return out
 
 
 # ---------- 后台线程 ----------
@@ -221,6 +262,8 @@ class MarketFeed:
         self._stop = threading.Event()
         self._minutes = {}
         self._minutes_at = 0.0
+        self._kmin = None
+        self._kmin_at = 0.0
         self._fail = 0
 
     # 两个抓取方法拆出来是为了让 MockMarketFeed 只换数据源
@@ -229,6 +272,9 @@ class MarketFeed:
 
     def _fetch_minutes(self):
         return {s: fetch_minutes(s) for s in MARKET_SYMS}
+
+    def _fetch_kospi_minutes(self):
+        return fetch_kospi_minutes()
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -258,7 +304,14 @@ class MarketFeed:
         if not self._minutes or (time.time() - self._minutes_at) >= self.MINUTES_INTERVAL:
             self._minutes = self._fetch_minutes()
             self._minutes_at = time.time()
-        return build_payload(self._fetch_quotes(), self._minutes, now)
+        # KOSPI 分时是锦上添花：失败就沿用上次的（或不画线），不算整次失败、不触发退避
+        if not self._kmin or (time.time() - self._kmin_at) >= self.MINUTES_INTERVAL:
+            try:
+                self._kmin = self._fetch_kospi_minutes()
+            except Exception:
+                pass
+            self._kmin_at = time.time()
+        return build_payload(self._fetch_quotes(), self._minutes, now, self._kmin)
 
     def _loop(self, stop):
         while not stop.is_set():
@@ -312,6 +365,20 @@ class MockMarketFeed(MarketFeed):
         out[KOSPI_SYM] = {"px": self._kospi[1], "chg": (self._kospi[1] / self._kospi[0] - 1) * 100,
                           "time": now.strftime("%Y-%m-%d %H:%M:%S")}
         return out
+
+    def _fetch_kospi_minutes(self):
+        # 从昨收开始随机游走到当前时刻，末端对齐到现价
+        now = datetime.now()
+        idx = (now.hour * 60 + now.minute - 8 * 60) // KOSPI_STEP
+        n = KOSPI_SLOTS if not kospi_open(now) else max(1, min(idx + 1, KOSPI_SLOTS))
+        rnd = random.Random(now.strftime("%Y%m%d"))      # 同一天形状固定，不会每分钟整条乱跳
+        line, px = [], self._kospi[0]
+        for _ in range(n):
+            px *= 1 + rnd.uniform(-0.0025, 0.0028)
+            line.append(px)
+        shift = self._kospi[1] - line[-1]
+        line = [round(x + shift * (i + 1) / n, 2) for i, x in enumerate(line)]
+        return {"date": now.strftime("%Y-%m-%d"), "prev": self._kospi[0], "line": line}
 
     def _fetch_minutes(self):
         # 昨天全天 + 今天到当前分钟，累计额按「开盘高、盘中平、尾盘略高」的形态
